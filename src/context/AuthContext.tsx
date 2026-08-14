@@ -3,7 +3,7 @@ import { User, Counter, AuthState } from '../types';
 
 interface AuthContextType extends AuthState {
   counter: Counter | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<User>;
   logout: () => void;
   updateCounterStatus: (newStatus: Counter['status']) => void;
 }
@@ -71,6 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setToken(data.token);
       setUser(data.user);
       setCounter(data.counter);
+      return data.user;
     } finally {
       setIsLoading(false);
     }

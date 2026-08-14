@@ -18,8 +18,12 @@ export const LoginPage: React.FC = () => {
     setLoading(true);
 
     try {
-      await login(email, password);
-      navigate('/staff');
+      const user = await login(email, password);
+      if (user?.role === 'STUDENT') {
+        navigate('/student');
+      } else {
+        navigate('/staff');
+      }
     } catch (err: any) {
       setError(err.message || 'Login failed. Check credentials.');
     } finally {
@@ -33,8 +37,31 @@ export const LoginPage: React.FC = () => {
     setError(null);
     setLoading(true);
     try {
-      await login('rudresh@queuecraft.edu', 'password123');
-      navigate('/staff');
+      const user = await login('rudresh@queuecraft.edu', 'password123');
+      if (user?.role === 'STUDENT') {
+        navigate('/student');
+      } else {
+        navigate('/staff');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Demo login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQuickDemoStudent = async () => {
+    setEmail('student@queuecraft.edu');
+    setPassword('password123');
+    setError(null);
+    setLoading(true);
+    try {
+      const user = await login('student@queuecraft.edu', 'password123');
+      if (user?.role === 'STUDENT') {
+        navigate('/student');
+      } else {
+        navigate('/staff');
+      }
     } catch (err: any) {
       setError(err.message || 'Demo login failed');
     } finally {
@@ -89,7 +116,7 @@ export const LoginPage: React.FC = () => {
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div>
             <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-              Staff Email Address
+              Email Address
             </label>
             <div style={{ position: 'relative', marginTop: '0.375rem' }}>
               <Mail size={18} style={{ position: 'absolute', left: '0.875rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
@@ -98,7 +125,7 @@ export const LoginPage: React.FC = () => {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="rudresh@queuecraft.edu"
+                placeholder="student@queuecraft.edu"
                 style={{
                   width: '100%',
                   padding: '0.75rem 0.875rem 0.75rem 2.6rem',
@@ -143,7 +170,7 @@ export const LoginPage: React.FC = () => {
             className="btn btn-primary btn-lg"
             style={{ width: '100%', marginTop: '0.5rem' }}
           >
-            <span>{loading ? 'Authenticating...' : 'Sign In to Staff Dashboard'}</span>
+            <span>{loading ? 'Authenticating...' : 'Sign In to Dashboard'}</span>
             <ArrowRight size={18} />
           </button>
         </form>
@@ -153,11 +180,21 @@ export const LoginPage: React.FC = () => {
           marginTop: '1.75rem',
           paddingTop: '1.25rem',
           borderTop: '1px solid var(--border-color)',
-          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.625rem',
         }}>
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem' }}>
-            <ShieldCheck size={14} /> Quick Demo Staff Credentials:
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem' }}>
+            <ShieldCheck size={14} /> Quick Demo Credentials:
           </p>
+          <button
+            onClick={handleQuickDemoStudent}
+            disabled={loading}
+            className="btn btn-primary"
+            style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center' }}
+          >
+            Log In as Demo Student
+          </button>
           <button
             onClick={handleQuickDemoRudresh}
             disabled={loading}
