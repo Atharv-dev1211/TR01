@@ -1,4 +1,5 @@
-import { Server as SocketIOServer } from 'socket.io';
+import { Server as SocketIOServer, Socket } from 'socket.io';
+import { SOCKET_EVENTS } from '../constants/events.js';
 
 export class SocketService {
   private io: SocketIOServer | null = null;
@@ -6,7 +7,7 @@ export class SocketService {
   public init(io: SocketIOServer): void {
     this.io = io;
 
-    this.io.on('connection', (socket) => {
+    this.io.on('connection', (socket: Socket) => {
       console.log(`[Socket.IO] Client connected: ${socket.id}`);
 
       socket.on('join_counter', (counterId: string) => {
@@ -22,6 +23,15 @@ export class SocketService {
       socket.on('disconnect', () => {
         console.log(`[Socket.IO] Client disconnected: ${socket.id}`);
       });
+
+      socket.on('QUEUECRAFT_SOCKET_TEST', (data: any) => {
+        console.log(`[Socket.IO] TEST EVENT received from client ${socket.id}:`, data);
+        socket.emit('QUEUECRAFT_SOCKET_TEST_ACK', {
+          status: 'ok',
+          received: data,
+          timestamp: new Date().toISOString(),
+        });
+      });
     });
   }
 
@@ -30,21 +40,71 @@ export class SocketService {
    */
   public emitQueueUpdated(serviceId: string, payload: any): void {
     if (!this.io) return;
-    this.io.emit('QUEUE_UPDATED', payload);
-    this.io.to(`service:${serviceId}`).emit('QUEUE_UPDATED', payload);
+    this.io.emit(SOCKET_EVENTS.QUEUE_UPDATED, payload);
+    this.io.to(`service:${serviceId}`).emit(SOCKET_EVENTS.QUEUE_UPDATED, payload);
+  }
+
+  public emitTokenCreated(token: any): void {
+    if (!this.io) return;
+    const payload = {
+      tokenId: token.id,
+      tokenNumber: token.token_number,
+      serviceId: token.service_id,
+      counterId: token.counter_id,
+      status: token.status
+    };
+    this.io.emit(SOCKET_EVENTS.TOKEN_CREATED, payload);
+    this.io.to(`service:${token.service_id}`).emit(SOCKET_EVENTS.TOKEN_CREATED, payload);
   }
 
   public emitTokenCalled(counterId: string, token: any): void {
     if (!this.io) return;
-    this.io.emit('TOKEN_CALLED', { counterId, token });
-    this.io.to(`counter:${counterId}`).emit('TOKEN_CALLED', token);
+    const payload = {
+      tokenId: token.id,
+      tokenNumber: token.token_number,
+      counterId: token.counter_id,
+      status: token.status
+    };
+    this.io.emit(SOCKET_EVENTS.TOKEN_CALLED, payload);
+    this.io.to(`counter:${counterId}`).emit(SOCKET_EVENTS.TOKEN_CALLED, payload);
   }
 
   public emitTokenCompleted(counterId: string, token: any): void {
     if (!this.io) return;
-    this.io.emit('TOKEN_COMPLETED', { counterId, token });
-    this.io.to(`counter:${counterId}`).emit('TOKEN_COMPLETED', token);
+    const payload = {
+      tokenId: token.id,
+      tokenNumber: token.token_number,
+      counterId: token.counter_id,
+      status: token.status
+    };
+    this.io.emit(SOCKET_EVENTS.TOKEN_COMPLETED, payload);
+    this.io.to(`counter:${counterId}`).emit(SOCKET_EVENTS.TOKEN_COMPLETED, payload);
   }
+
+  public emitTokenCancelled(token: any): void {
+    if (!this.io) return;
+    const payload = {
+      tokenId: token.id,
+      tokenNumber: token.token_number,
+      counterId: token.counter_id,
+      status: token.status
+    };
+    this.io.emit(SOCKET_EVENTS.TOKEN_CANCELLED, payload);
+    if (token.counter_id) {
+      this.io.to(`counter:${token.counter_id}`).emit(SOCKET_EVENTS.TOKEN_CANCELLED, payload);
+    }
+    this.io.to(`service:${token.service_id}`).emit(SOCKET_EVENTS.TOKEN_CANCELLED, payload);
+  }
+
+  public emitWaitTimeUpdated(counterId: string, estimatedWaitTime: number): void {
+    if (!this.io) return;
+    const payload = { counterId, estimatedWaitTime };
+    this.io.emit(SOCKET_EVENTS.WAIT_TIME_UPDATED, payload);
+    this.io.to(`counter:${counterId}`).emit(SOCKET_EVENTS.WAIT_TIME_UPDATED, payload);
+  }
+
+
+
 
   public emitTokenSkipped(counterId: string, token: any): void {
     if (!this.io) return;

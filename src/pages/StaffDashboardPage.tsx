@@ -13,7 +13,7 @@ import { RefreshCw, AlertTriangle } from 'lucide-react';
 
 export const StaffDashboardPage: React.FC = () => {
   const { counter, updateCounterStatus } = useAuth();
-  const { socket } = useSocket();
+  const { socket, isConnected, testStatus, triggerSocketTest } = useSocket();
 
   const [dashboardData, setDashboardData] = useState<StaffDashboardData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -96,6 +96,23 @@ export const StaffDashboardPage: React.FC = () => {
       socket.off('COUNTER_STATUS_CHANGED', handleCounterStatus);
     };
   }, [socket, counter?.id, fetchDashboard, updateCounterStatus]);
+
+  // Notify of test status changes
+  useEffect(() => {
+    if (testStatus === 'success') {
+      addToast(
+        'success',
+        'Socket Connection Verified',
+        'Successfully completed QUEUECRAFT_SOCKET_TEST round-trip! Received QUEUECRAFT_SOCKET_TEST_ACK from server.'
+      );
+    } else if (testStatus === 'error') {
+      addToast(
+        'error',
+        'Socket Connection Error',
+        'Failed to connect to the real-time server. Please check your connection.'
+      );
+    }
+  }, [testStatus]);
 
   // Handle CALL NEXT Action
   const handleCallNext = async () => {
@@ -334,16 +351,40 @@ export const StaffDashboardPage: React.FC = () => {
             />
           )}
 
-          <button
-            onClick={fetchDashboard}
-            disabled={actionLoading}
-            className="btn btn-secondary"
-            style={{ padding: '0.5rem 0.875rem' }}
-            title="Refresh Queue State"
-          >
-            <RefreshCw size={16} />
-            <span>Refresh</span>
-          </button>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              onClick={triggerSocketTest}
+              disabled={actionLoading || testStatus === 'pending'}
+              className="btn btn-secondary"
+              style={{
+                padding: '0.5rem 0.875rem',
+                borderColor: testStatus === 'success' ? 'var(--status-open)' : undefined,
+                color: testStatus === 'success' ? 'var(--status-open)' : undefined,
+              }}
+              title="Test Socket Connection"
+            >
+              <span>
+                {testStatus === 'pending'
+                  ? 'Testing Live Link...'
+                  : testStatus === 'success'
+                    ? 'Connection Verified!'
+                    : testStatus === 'error'
+                      ? 'Connection Failed'
+                      : 'Test Socket Connection'}
+              </span>
+            </button>
+
+            <button
+              onClick={fetchDashboard}
+              disabled={actionLoading}
+              className="btn btn-secondary"
+              style={{ padding: '0.5rem 0.875rem' }}
+              title="Refresh Queue State"
+            >
+              <RefreshCw size={16} />
+              <span>Refresh</span>
+            </button>
+          </div>
         </div>
 
         {error && (

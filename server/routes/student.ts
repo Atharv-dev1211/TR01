@@ -43,4 +43,60 @@ router.get('/counters', (req: AuthRequest, res: Response) => {
   }
 });
 
+// POST /api/student/tokens
+router.post('/tokens', async (req: AuthRequest, res: Response) => {
+  try {
+    const { serviceId } = req.body;
+    const user = (req as any).user;
+    if (!serviceId) {
+      res.status(400).json({ error: 'serviceId is required' });
+      return;
+    }
+
+    const { queueEngine } = await import('../services/queueEngine.js');
+    const { socketService } = await import('../services/socketService.js');
+
+    const result = queueEngine.createToken(serviceId, user.id, user.name);
+    if (!result.success) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+
+    socketService.emitTokenCreated(result.token);
+    socketService.emitQueueUpdated(serviceId, {
+      action: 'CREATED',
+      tokenId: result.token?.id
+    });
+
+    res.json({ message: 'Token created successfully', token: result.token });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to create token' });
+  }
+});
+
+// POST /api/student/tokens/:tokenId/cancel
+router.post('/tokens/:tokenId/cancel', async (req: AuthRequest, res: Response) => {
+  try {
+    const tokenId = String(req.params.tokenId);
+    const { queueEngine } = await import('../services/queueEngine.js');
+    const { socketService } = await import('../services/socketService.js');
+
+    const result = queueEngine.cancelToken(tokenId);
+    if (!result.success) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+
+    socketService.emitTokenCancelled(result.token);
+    socketService.emitQueueUpdated(result.token?.service_id!, {
+      action: 'CANCELLED',
+      tokenId: result.token?.id
+    });
+
+    res.json({ message: 'Token cancelled successfully', token: result.token });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to cancel token' });
+  }
+});
+
 export default router;
