@@ -1,0 +1,66 @@
+import { getDb } from './database.js';
+
+export function initializeSchema(): void {
+  const db = getDb();
+
+  db.exec(`
+    -- USERS TABLE
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('STUDENT', 'STAFF', 'ADMIN')),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- SERVICES TABLE
+    CREATE TABLE IF NOT EXISTS services (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      code TEXT UNIQUE NOT NULL,
+      description TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- COUNTERS TABLE
+    CREATE TABLE IF NOT EXISTS counters (
+      id TEXT PRIMARY KEY,
+      service_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'CLOSED' CHECK(status IN ('OPEN', 'CLOSED', 'BUSY', 'MAINTENANCE')),
+      assigned_staff_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE,
+      FOREIGN KEY (assigned_staff_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    -- TOKENS TABLE
+    CREATE TABLE IF NOT EXISTS tokens (
+      id TEXT PRIMARY KEY,
+      token_number TEXT NOT NULL,
+      student_id TEXT,
+      student_name TEXT NOT NULL,
+      student_email TEXT,
+      service_id TEXT NOT NULL,
+      counter_id TEXT,
+      priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK(priority IN ('NORMAL', 'HIGH')),
+      status TEXT NOT NULL DEFAULT 'WAITING' CHECK(status IN ('WAITING', 'SERVING', 'HELD', 'COMPLETED', 'SKIPPED', 'CANCELLED')),
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      started_at DATETIME,
+      completed_at DATETIME,
+      skipped_at DATETIME,
+      held_at DATETIME,
+      notes TEXT,
+      FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE,
+      FOREIGN KEY (counter_id) REFERENCES counters(id) ON DELETE SET NULL,
+      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    -- INDEXES FOR QUEUE PERFORMANCE
+    CREATE INDEX IF NOT EXISTS idx_tokens_service_status ON tokens(service_id, status);
+    CREATE INDEX IF NOT EXISTS idx_tokens_counter_status ON tokens(counter_id, status);
+    CREATE INDEX IF NOT EXISTS idx_tokens_created_priority ON tokens(priority, created_at);
+    CREATE INDEX IF NOT EXISTS idx_counters_assigned_staff ON counters(assigned_staff_id);
+  `);
+}
