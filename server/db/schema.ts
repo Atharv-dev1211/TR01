@@ -44,7 +44,7 @@ export function initializeSchema(): void {
       student_email TEXT,
       service_id TEXT NOT NULL,
       counter_id TEXT,
-      priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK(priority IN ('NORMAL', 'HIGH')),
+      priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK(priority IN ('NORMAL', 'HIGH', 'PRIORITY', 'URGENT')),
       status TEXT NOT NULL DEFAULT 'WAITING' CHECK(status IN ('WAITING', 'SERVING', 'HELD', 'COMPLETED', 'SKIPPED', 'CANCELLED')),
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       started_at DATETIME,

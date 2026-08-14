@@ -82,8 +82,8 @@ export const TokenDetailsModal: React.FC<TokenDetailsModalProps> = ({ tokenId, o
               {token?.token_number || 'Token Details'}
             </div>
             {token && getStatusBadge(token.status)}
-            {token?.priority === 'HIGH' && (
-              <span className="badge badge-priority">HIGH PRIORITY</span>
+            {token?.priority !== 'NORMAL' && (
+              <span className="badge badge-priority">{token?.priority} PRIORITY</span>
             )}
           </div>
           <button onClick={onClose} className="btn btn-secondary" style={{ padding: '0.375rem 0.5rem' }}>
