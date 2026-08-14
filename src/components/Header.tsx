@@ -106,10 +106,10 @@ export const Header: React.FC = () => {
             </div>
             <div>
               <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                {user?.name || 'Staff User'}
+                {user?.name || 'User'}
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                {user?.role} Operator
+                {user?.role === 'STUDENT' ? 'Student' : `${user?.role} Operator`}
               </div>
             </div>
           </div>

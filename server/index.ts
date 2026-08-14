@@ -9,6 +9,7 @@ import { socketService } from './services/socketService.js';
 import authRoutes from './routes/auth.js';
 import staffQueueRoutes from './routes/staffQueue.js';
 import queueRoutes from './routes/queue.js';
+import studentRoutes from './routes/student.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,6 +42,7 @@ try {
 app.use('/api/auth', authRoutes);
 app.use('/api/staff', staffQueueRoutes);
 app.use('/api/queue', queueRoutes);
+app.use('/api/student', studentRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
