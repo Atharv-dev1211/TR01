@@ -30,7 +30,7 @@ export interface Counter {
   created_at: string;
 }
 
-export type TokenPriority = 'NORMAL' | 'HIGH';
+export type TokenPriority = 'NORMAL' | 'HIGH' | 'PRIORITY' | 'URGENT';
 
 export type TokenStatus =
   | 'WAITING'
