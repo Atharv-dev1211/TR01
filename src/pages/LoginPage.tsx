@@ -19,7 +19,13 @@ export const LoginPage: React.FC = () => {
 
     try {
       await login(email, password);
-      navigate('/staff');
+      const token = localStorage.getItem('qc_token');
+      const payload = token ? JSON.parse(atob(token.split('.')[1])) : null;
+      if (payload?.role === 'ADMIN') {
+        navigate('/admin');
+      } else {
+        navigate('/staff');
+      }
     } catch (err: any) {
       setError(err.message || 'Login failed. Check credentials.');
     } finally {
@@ -35,6 +41,21 @@ export const LoginPage: React.FC = () => {
     try {
       await login('rudresh@queuecraft.edu', 'password123');
       navigate('/staff');
+    } catch (err: any) {
+      setError(err.message || 'Demo login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQuickDemoAdmin = async () => {
+    setEmail('admin@queuecraft.edu');
+    setPassword('password123');
+    setError(null);
+    setLoading(true);
+    try {
+      await login('admin@queuecraft.edu', 'password123');
+      navigate('/admin');
     } catch (err: any) {
       setError(err.message || 'Demo login failed');
     } finally {
@@ -162,12 +183,21 @@ export const LoginPage: React.FC = () => {
             onClick={handleQuickDemoRudresh}
             disabled={loading}
             className="btn btn-secondary"
-            style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center' }}
+            style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center', marginBottom: '0.5rem' }}
           >
             Log In as Staff Rudresh (Library Printer)
+          </button>
+          <button
+            onClick={handleQuickDemoAdmin}
+            disabled={loading}
+            className="btn btn-secondary"
+            style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center' }}
+          >
+            Log In as Administrator (Global settings)
           </button>
         </div>
       </div>
     </div>
   );
 };
+

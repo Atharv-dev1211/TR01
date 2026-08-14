@@ -8,6 +8,7 @@ import { seedDatabase } from './db/seed.js';
 import { socketService } from './services/socketService.js';
 import authRoutes from './routes/auth.js';
 import staffQueueRoutes from './routes/staffQueue.js';
+import adminRoutes from './routes/admin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +40,7 @@ try {
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/staff', staffQueueRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

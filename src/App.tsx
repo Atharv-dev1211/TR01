@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
 import { LoginPage } from './pages/LoginPage';
 import { StaffDashboardPage } from './pages/StaffDashboardPage';
+import { AdminDashboardPage } from './pages/AdminDashboardPage';
 
 const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -50,7 +51,54 @@ const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children
   return <>{children}</>;
 };
 
+const ProtectedAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, isLoading, user } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'var(--bg-dark)',
+        color: 'var(--text-secondary)',
+      }}>
+        Authenticating Administrator...
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user?.role !== 'ADMIN') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: '1rem',
+        backgroundColor: 'var(--bg-dark)',
+        color: 'var(--text-primary)',
+      }}>
+        <h2>Access Denied</h2>
+        <p style={{ color: 'var(--text-secondary)' }}>
+          Only System Administrators can access this area.
+        </p>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+};
+
 export const AppContent: React.FC = () => {
+  const { isAuthenticated, user } = useAuth();
+
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
@@ -64,7 +112,26 @@ export const AppContent: React.FC = () => {
           </ProtectedStaffRoute>
         }
       />
-      <Route path="*" element={<Navigate to="/staff" replace />} />
+      <Route
+        path="/admin/*"
+        element={
+          <ProtectedAdminRoute>
+            <SocketProvider>
+              <AdminDashboardPage />
+            </SocketProvider>
+          </ProtectedAdminRoute>
+        }
+      />
+      <Route
+        path="*"
+        element={
+          isAuthenticated
+            ? user?.role === 'ADMIN'
+              ? <Navigate to="/admin" replace />
+              : <Navigate to="/staff" replace />
+            : <Navigate to="/login" replace />
+        }
+      />
     </Routes>
   );
 };
@@ -80,3 +147,4 @@ export const App: React.FC = () => {
 };
 
 export default App;
+
