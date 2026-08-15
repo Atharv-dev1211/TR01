@@ -501,7 +501,7 @@ router.patch('/counters/:id/assign-staff', (req: AuthRequest, res: Response) => 
       // Enforce exclusivity: check if they are already assigned elsewhere
       const existingAssignment = db.prepare(`
         SELECT * FROM counters WHERE assigned_staff_id = ? AND id != ?
-      `).get(staffId) as any;
+      `).get(staffId, id) as any;
 
       // Handle re-assignment: clear the other counter assignments if found
       if (existingAssignment) {
