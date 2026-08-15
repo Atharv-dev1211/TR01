@@ -17,7 +17,7 @@ function getDashboardData(counter: any) {
 
   const service = db.prepare('SELECT * FROM services WHERE id = ?').get(counter.service_id) as any;
   const currentToken = queueEngine.getCurrentServingToken(counter.id);
-  const waitingQueue = queueEngine.getWaitingQueue(counter.service_id);
+  const waitingQueue = queueEngine.getWaitingQueue(counter.service_id, counter.id);
 
   // Operational stats calculations
   const heldCount = (db.prepare(`
@@ -86,7 +86,7 @@ router.get('/counter', (req: AuthRequest, res: Response) => {
 // GET /api/staff/counter/queue
 router.get('/counter/queue', (req: AuthRequest, res: Response) => {
   const counter = (req as any).assignedCounter;
-  const queue = queueEngine.getWaitingQueue(counter.service_id);
+  const queue = queueEngine.getWaitingQueue(counter.service_id, counter.id);
   res.json(queue);
 });
 

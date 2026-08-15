@@ -28,6 +28,8 @@ export interface Counter {
   assigned_staff_id?: string;
   assigned_staff_name?: string;
   created_at: string;
+  current_token_number?: string | null;
+  estimated_wait_time?: number | null;
 }
 
 export type TokenPriority = 'NORMAL' | 'HIGH';
@@ -48,6 +50,7 @@ export interface Token {
   student_email?: string;
   service_id: string;
   service_name?: string;
+  service_code?: string;
   counter_id?: string;
   counter_name?: string;
   priority: TokenPriority;
@@ -60,6 +63,9 @@ export interface Token {
   notes?: string | null;
   wait_duration_seconds?: number;
   serving_duration_seconds?: number;
+  queue_position?: number;
+  people_ahead?: number;
+  estimated_wait?: number;
 }
 
 export interface OperationalStats {

@@ -1,24 +1,37 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useSocket } from '../context/SocketContext';
+import { QueueStatus } from '../components/QueueStatus';
+import { CounterStatus as CounterStatusComponent } from '../components/CounterStatus';
 import { Service, Counter, CounterStatus } from '../types';
 import { Header } from '../components/Header';
-import { 
-  Search, 
-  Layers, 
-  Monitor, 
-  HelpCircle, 
-  RefreshCw, 
-  AlertCircle, 
-  BookOpen, 
-  Clock, 
-  CheckCircle, 
+import { SOCKET_EVENTS } from '../constants/events';
+import {
+  Search,
+  Layers,
+  Monitor,
+  HelpCircle,
+  RefreshCw,
+  AlertCircle,
+  BookOpen,
+  Clock,
+  CheckCircle,
   Sparkles,
   Calendar,
-  ArrowRight
+  ArrowRight,
+  XCircle
 } from 'lucide-react';
 
 export const StudentDashboardPage: React.FC = () => {
   const { user } = useAuth();
+  const {
+    socket,
+    activeToken,
+    activeTokenLoading,
+    bookToken,
+    cancelToken
+  } = useSocket();
+
   const [services, setServices] = useState<Service[]>([]);
   const [counters, setCounters] = useState<Counter[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -66,6 +79,20 @@ export const StudentDashboardPage: React.FC = () => {
     fetchData();
   }, [fetchData]);
 
+  // Handle live lists refresh when queue updates dynamically
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleQueueUpdate = () => {
+      fetchData();
+    };
+
+    socket.on(SOCKET_EVENTS.QUEUE_UPDATED, handleQueueUpdate);
+    return () => {
+      socket.off(SOCKET_EVENTS.QUEUE_UPDATED, handleQueueUpdate);
+    };
+  }, [socket, fetchData]);
+
   // Client-side Search and Filter logic
   const getStatusBadge = (status: CounterStatus) => {
     switch (status) {
@@ -95,24 +122,24 @@ export const StudentDashboardPage: React.FC = () => {
   // Filter services and counters
   const matchedServices = services.filter(service => {
     const sQuery = searchQuery.toLowerCase().trim();
-    
+
     // Check if service attributes match query
-    const matchesService = 
+    const matchesService =
       service.name.toLowerCase().includes(sQuery) ||
       service.code.toLowerCase().includes(sQuery) ||
       (service.description || '').toLowerCase().includes(sQuery);
 
     // Get counters associated with this service
     const serviceCounters = counters.filter(c => c.service_id === service.id);
-    
+
     // Check if any associated counter name matches query
-    const matchesCounterName = serviceCounters.some(c => 
+    const matchesCounterName = serviceCounters.some(c =>
       c.name.toLowerCase().includes(sQuery)
     );
 
     // Apply status filter
     // If selectedStatus is not 'ALL', only display the service if it has counters matching that status
-    const hasMatchingStatusCounter = selectedStatus === 'ALL' || 
+    const hasMatchingStatusCounter = selectedStatus === 'ALL' ||
       serviceCounters.some(c => c.status === selectedStatus);
 
     return (matchesService || matchesCounterName) && hasMatchingStatusCounter;
@@ -162,6 +189,10 @@ export const StudentDashboardPage: React.FC = () => {
             <span>Refresh Discovery</span>
           </button>
         </div>
+
+        <QueueStatus />
+
+        <CounterStatusComponent />
 
         {/* Search and Filters Strip */}
         <div style={{
@@ -289,7 +320,7 @@ export const StudentDashboardPage: React.FC = () => {
                   // Filter counters of this service by search & status
                   const displayCounters = serviceCounters.filter(c => {
                     const matchesStatus = selectedStatus === 'ALL' || c.status === selectedStatus;
-                    const matchesSearch = searchQuery === '' || 
+                    const matchesSearch = searchQuery === '' ||
                       c.name.toLowerCase().includes(searchQuery.toLowerCase().trim()) ||
                       service.name.toLowerCase().includes(searchQuery.toLowerCase().trim()) ||
                       service.code.toLowerCase().includes(searchQuery.toLowerCase().trim());
@@ -419,7 +450,7 @@ export const StudentDashboardPage: React.FC = () => {
                         )}
                       </div>
 
-                      {/* Booking CTA - Prototype placeholder */}
+                      {/* Booking CTA */}
                       <div style={{
                         display: 'flex',
                         justifyContent: 'space-between',
@@ -434,27 +465,34 @@ export const StudentDashboardPage: React.FC = () => {
                           <Clock size={12} />
                           <span>Average wait times vary by priority.</span>
                         </div>
-                        
+
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                          <span style={{
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            color: 'var(--accent-secondary)',
-                            backgroundColor: 'rgba(6, 182, 212, 0.08)',
-                            padding: '0.375rem 0.75rem',
-                            borderRadius: 'var(--radius-md)',
-                            border: '1px solid rgba(6, 182, 212, 0.25)',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.02em'
-                          }}>
-                            Coming in Phase 2
-                          </span>
+                          {activeToken && (
+                            <span style={{
+                              fontSize: '0.75rem',
+                              fontWeight: 750,
+                              color: 'var(--status-busy)',
+                              backgroundColor: 'var(--status-busy-bg)',
+                              padding: '0.375rem 0.75rem',
+                              borderRadius: 'var(--radius-md)',
+                              border: '1px solid rgba(245, 158, 11, 0.25)',
+                            }}>
+                              Ticket Active
+                            </span>
+                          )}
                           <button
-                            disabled
+                            onClick={() => bookToken(service.id)}
+                            disabled={activeTokenLoading || activeToken !== null}
                             className="btn btn-primary"
-                            style={{ opacity: 0.5, cursor: 'not-allowed', padding: '0.5rem 1rem' }}
+                            style={{ padding: '0.5rem 1rem' }}
                           >
-                            <span>Book Token</span>
+                            <span>
+                              {activeToken !== null
+                                ? 'Already Queued'
+                                : activeTokenLoading
+                                  ? 'Booking...'
+                                  : 'Book Token'}
+                            </span>
                             <ArrowRight size={14} />
                           </button>
                         </div>

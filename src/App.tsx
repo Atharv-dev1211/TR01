@@ -1,10 +1,11 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { SocketProvider } from './context/SocketContext';
+import { SocketProvider, useSocket } from './context/SocketContext';
 import { LoginPage } from './pages/LoginPage';
 import { StaffDashboardPage } from './pages/StaffDashboardPage';
 import { StudentDashboardPage } from './pages/StudentDashboardPage';
+import { ToastNotification } from './components/ToastNotification';
 
 const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -98,48 +99,52 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
 
 export const AppContent: React.FC = () => {
   const { isAuthenticated, user } = useAuth();
+  const { toasts, removeToast } = useSocket();
 
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/staff"
-        element={
-          <ProtectedStaffRoute>
-            <SocketProvider>
+    <>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/staff"
+          element={
+            <ProtectedStaffRoute>
               <StaffDashboardPage />
-            </SocketProvider>
-          </ProtectedStaffRoute>
-        }
-      />
-      <Route
-        path="/student"
-        element={
-          <ProtectedStudentRoute>
-            <StudentDashboardPage />
-          </ProtectedStudentRoute>
-        }
-      />
-      <Route
-        path="*"
-        element={
-          isAuthenticated
-            ? user?.role === 'STUDENT'
-              ? <Navigate to="/student" replace />
-              : <Navigate to="/staff" replace />
-            : <Navigate to="/login" replace />
-        }
-      />
-    </Routes>
+            </ProtectedStaffRoute>
+          }
+        />
+        <Route
+          path="/student"
+          element={
+            <ProtectedStudentRoute>
+              <StudentDashboardPage />
+            </ProtectedStudentRoute>
+          }
+        />
+        <Route
+          path="*"
+          element={
+            isAuthenticated
+              ? user?.role === 'STUDENT'
+                ? <Navigate to="/student" replace />
+                : <Navigate to="/staff" replace />
+              : <Navigate to="/login" replace />
+          }
+        />
+      </Routes>
+      <ToastNotification toasts={toasts} onDismiss={removeToast} />
+    </>
   );
 };
 
 export const App: React.FC = () => {
   return (
     <AuthProvider>
-      <Router>
-        <AppContent />
-      </Router>
+      <SocketProvider>
+        <Router>
+          <AppContent />
+        </Router>
+      </SocketProvider>
     </AuthProvider>
   );
 };

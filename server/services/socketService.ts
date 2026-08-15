@@ -1,5 +1,6 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { SOCKET_EVENTS } from '../constants/events.js';
+import { getDb } from '../db/database.js';
 
 export class SocketService {
   private io: SocketIOServer | null = null;
@@ -51,7 +52,8 @@ export class SocketService {
       tokenNumber: token.token_number,
       serviceId: token.service_id,
       counterId: token.counter_id,
-      status: token.status
+      status: token.status,
+      studentId: token.student_id
     };
     this.io.emit(SOCKET_EVENTS.TOKEN_CREATED, payload);
     this.io.to(`service:${token.service_id}`).emit(SOCKET_EVENTS.TOKEN_CREATED, payload);
@@ -59,11 +61,24 @@ export class SocketService {
 
   public emitTokenCalled(counterId: string, token: any): void {
     if (!this.io) return;
+    let counterName = 'Assigned Desk';
+    try {
+      const db = getDb();
+      const row = db.prepare('SELECT name FROM counters WHERE id = ?').get(counterId) as any;
+      if (row?.name) {
+        counterName = row.name;
+      }
+    } catch (err) {
+      console.error('[SocketService] Error fetching counter name:', err);
+    }
+
     const payload = {
       tokenId: token.id,
       tokenNumber: token.token_number,
       counterId: token.counter_id,
-      status: token.status
+      counterName,
+      status: token.status,
+      studentId: token.student_id
     };
     this.io.emit(SOCKET_EVENTS.TOKEN_CALLED, payload);
     this.io.to(`counter:${counterId}`).emit(SOCKET_EVENTS.TOKEN_CALLED, payload);
@@ -75,7 +90,8 @@ export class SocketService {
       tokenId: token.id,
       tokenNumber: token.token_number,
       counterId: token.counter_id,
-      status: token.status
+      status: token.status,
+      studentId: token.student_id
     };
     this.io.emit(SOCKET_EVENTS.TOKEN_COMPLETED, payload);
     this.io.to(`counter:${counterId}`).emit(SOCKET_EVENTS.TOKEN_COMPLETED, payload);
@@ -87,7 +103,8 @@ export class SocketService {
       tokenId: token.id,
       tokenNumber: token.token_number,
       counterId: token.counter_id,
-      status: token.status
+      status: token.status,
+      studentId: token.student_id
     };
     this.io.emit(SOCKET_EVENTS.TOKEN_CANCELLED, payload);
     if (token.counter_id) {

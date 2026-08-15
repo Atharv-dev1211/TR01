@@ -13,7 +13,7 @@ import { RefreshCw, AlertTriangle } from 'lucide-react';
 
 export const StaffDashboardPage: React.FC = () => {
   const { counter, updateCounterStatus } = useAuth();
-  const { socket, isConnected, testStatus, triggerSocketTest } = useSocket();
+  const { socket, isConnected, testStatus, triggerSocketTest, addToast } = useSocket();
 
   const [dashboardData, setDashboardData] = useState<StaffDashboardData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -22,21 +22,6 @@ export const StaffDashboardPage: React.FC = () => {
 
   // Modal State
   const [selectedTokenId, setSelectedTokenId] = useState<string | null>(null);
-
-  // Toasts State
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-  const addToast = (type: 'success' | 'error' | 'info' | 'warning', title: string, message: string) => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { id, type, title, message }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4500);
-  };
-
-  const removeToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
 
   // Fetch Dashboard Data
   const fetchDashboard = useCallback(async () => {
@@ -455,9 +440,6 @@ export const StaffDashboardPage: React.FC = () => {
           onClose={() => setSelectedTokenId(null)}
         />
       )}
-
-      {/* Toasts Feedback Container */}
-      <ToastNotification toasts={toasts} onDismiss={removeToast} />
     </div>
   );
 };
