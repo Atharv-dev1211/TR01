@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { SocketProvider, useSocket } from './context/SocketContext';
 import { LoginPage } from './pages/LoginPage';
 import { StaffDashboardPage } from './pages/StaffDashboardPage';
+import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { StudentDashboardPage } from './pages/StudentDashboardPage';
 import { ToastNotification } from './components/ToastNotification';
 
@@ -52,6 +53,7 @@ const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children
   return <>{children}</>;
 };
 
+const ProtectedAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
 
@@ -65,6 +67,7 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
         backgroundColor: 'var(--bg-dark)',
         color: 'var(--text-secondary)',
       }}>
+        Authenticating Administrator...
         Authenticating Student User...
       </div>
     );
@@ -74,6 +77,7 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
     return <Navigate to="/login" replace />;
   }
 
+  if (user?.role !== 'ADMIN') {
   if (user?.role !== 'STUDENT') {
     return (
       <div style={{
@@ -88,6 +92,7 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
       }}>
         <h2>Access Denied</h2>
         <p style={{ color: 'var(--text-secondary)' }}>
+          Only System Administrators can access this area.
           This section is restricted to student accounts only.
         </p>
       </div>
@@ -110,30 +115,38 @@ export const AppContent: React.FC = () => {
           element={
             <ProtectedStaffRoute>
               <StaffDashboardPage />
-            </ProtectedStaffRoute>
-          }
-        />
-        <Route
-          path="/student"
-          element={
-            <ProtectedStudentRoute>
-              <StudentDashboardPage />
-            </ProtectedStudentRoute>
-          }
-        />
-        <Route
-          path="*"
-          element={
-            isAuthenticated
-              ? user?.role === 'STUDENT'
-                ? <Navigate to="/student" replace />
-                : <Navigate to="/staff" replace />
-              : <Navigate to="/login" replace />
-          }
-        />
-      </Routes>
-      <ToastNotification toasts={toasts} onDismiss={removeToast} />
-    </>
+            </SocketProvider>
+          </ProtectedStaffRoute>
+        }
+      />
+      <Route
+        path="/admin/*"
+        element={
+          <ProtectedAdminRoute>
+            <SocketProvider>
+              <AdminDashboardPage />
+            </SocketProvider>
+          </ProtectedAdminRoute>
+        path="/student"
+        element={
+          <ProtectedStudentRoute>
+            <StudentDashboardPage />
+          </ProtectedStudentRoute>
+        }
+      />
+      <Route
+        path="*"
+        element={
+          isAuthenticated
+            ? user?.role === 'ADMIN'
+              ? <Navigate to="/admin" replace />
+            ? user?.role === 'STUDENT'
+              ? <Navigate to="/student" replace />
+              : <Navigate to="/staff" replace />
+            : <Navigate to="/login" replace />
+        }
+      />
+    </Routes>
   );
 };
 
@@ -150,3 +163,4 @@ export const App: React.FC = () => {
 };
 
 export default App;
+
