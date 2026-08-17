@@ -8,6 +8,7 @@ import { StudentDashboardPage } from './pages/StudentDashboardPage';
 import { BookingPage } from './pages/BookingPage';
 import { ActiveTokenPage } from './pages/ActiveTokenPage';
 import { TokenHistoryPage } from './pages/TokenHistoryPage';
+import { AdminDashboardPage } from './pages/AdminDashboardPage';
 
 const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -54,6 +55,51 @@ const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children
   return <>{children}</>;
 };
 
+const ProtectedAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, isLoading, user } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'var(--bg-dark)',
+        color: 'var(--text-secondary)',
+      }}>
+        Authenticating Administrator...
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user?.role !== 'ADMIN') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: '1rem',
+        backgroundColor: 'var(--bg-dark)',
+        color: 'var(--text-primary)',
+      }}>
+        <h2>Access Denied</h2>
+        <p style={{ color: 'var(--text-secondary)' }}>
+          Only System Administrators can access this area.
+        </p>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+};
+
 const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
 
@@ -90,7 +136,7 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
       }}>
         <h2>Access Denied</h2>
         <p style={{ color: 'var(--text-secondary)' }}>
-          Staff accounts cannot access the Student Portal.
+          This section is restricted to student accounts only.
         </p>
       </div>
     );
@@ -100,6 +146,8 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
 };
 
 export const AppContent: React.FC = () => {
+  const { isAuthenticated, user } = useAuth();
+
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
@@ -111,6 +159,16 @@ export const AppContent: React.FC = () => {
               <StaffDashboardPage />
             </SocketProvider>
           </ProtectedStaffRoute>
+        }
+      />
+      <Route
+        path="/admin/*"
+        element={
+          <ProtectedAdminRoute>
+            <SocketProvider>
+              <AdminDashboardPage />
+            </SocketProvider>
+          </ProtectedAdminRoute>
         }
       />
       <Route
@@ -153,7 +211,18 @@ export const AppContent: React.FC = () => {
           </ProtectedStudentRoute>
         }
       />
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route
+        path="*"
+        element={
+          isAuthenticated
+            ? user?.role === 'ADMIN'
+              ? <Navigate to="/admin" replace />
+              : user?.role === 'STUDENT'
+                ? <Navigate to="/student" replace />
+                : <Navigate to="/staff" replace />
+            : <Navigate to="/login" replace />
+        }
+      />
     </Routes>
   );
 };

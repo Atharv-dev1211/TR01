@@ -95,21 +95,21 @@ export function seedDatabase(): void {
   insertToken.run(
     'tkn-042', 'LP-042', 'usr-student-ananya', 'Ananya Patel', 'ananya@queuecraft.edu',
     'srv-lp', 'cntr-lp-2', 'NORMAL', 'WAITING',
-    minsAgo(20), null, null, null, null, 'Assignment printout'
+    minsAgo(10), null, null, null, null, 'Assignment printout'
   );
 
   // LP-043 (WAITING - Normal)
   insertToken.run(
     'tkn-043', 'LP-043', 'usr-student-rohan', 'Rohan Verma', 'rohan@queuecraft.edu',
     'srv-lp', 'cntr-lp-2', 'NORMAL', 'WAITING',
-    minsAgo(15), null, null, null, null, 'Project report 5 copies'
+    minsAgo(5), null, null, null, null, 'Project report 5 copies'
   );
 
   // LP-044 (WAITING - HIGH Priority)
   insertToken.run(
     'tkn-044', 'LP-044', 'usr-student-diya', 'Diya Sengupta', 'diya@queuecraft.edu',
     'srv-lp', 'cntr-lp-2', 'HIGH', 'WAITING',
-    minsAgo(12), null, null, null, null, 'Urgent exam hall ticket printout'
+    minsAgo(2), null, null, null, null, 'Urgent exam hall ticket printout'
   );
 
   // LP-045 (HELD)

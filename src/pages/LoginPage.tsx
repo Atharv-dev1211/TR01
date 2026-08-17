@@ -21,6 +21,8 @@ export const LoginPage: React.FC = () => {
       const loggedInUser = await login(email, password);
       if (loggedInUser?.role === 'STUDENT') {
         navigate('/student');
+      } else if (loggedInUser?.role === 'ADMIN') {
+        navigate('/admin');
       } else {
         navigate('/staff');
       }
@@ -37,8 +39,14 @@ export const LoginPage: React.FC = () => {
     setError(null);
     setLoading(true);
     try {
-      const loggedInUser = await login('rudresh@queuecraft.edu', 'password123');
-      navigate('/staff');
+      const user = await login('rudresh@queuecraft.edu', 'password123');
+      if (user?.role === 'STUDENT') {
+        navigate('/student');
+      } else if (user?.role === 'ADMIN') {
+        navigate('/admin');
+      } else {
+        navigate('/staff');
+      }
     } catch (err: any) {
       setError(err.message || 'Demo login failed');
     } finally {
@@ -52,10 +60,35 @@ export const LoginPage: React.FC = () => {
     setError(null);
     setLoading(true);
     try {
-      const loggedInUser = await login('student@queuecraft.edu', 'password123');
-      navigate('/student');
+      const user = await login('student@queuecraft.edu', 'password123');
+      if (user?.role === 'STUDENT') {
+        navigate('/student');
+      } else if (user?.role === 'ADMIN') {
+        navigate('/admin');
+      } else {
+        navigate('/staff');
+      }
     } catch (err: any) {
-      setError(err.message || 'Demo student login failed');
+      setError(err.message || 'Demo login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQuickDemoAdmin = async () => {
+    setEmail('admin@queuecraft.edu');
+    setPassword('password123');
+    setError(null);
+    setLoading(true);
+    try {
+      const user = await login('admin@queuecraft.edu', 'password123');
+      if (user?.role === 'ADMIN') {
+        navigate('/admin');
+      } else {
+        navigate('/staff');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Demo login failed');
     } finally {
       setLoading(false);
     }
@@ -108,7 +141,7 @@ export const LoginPage: React.FC = () => {
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div>
             <label style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-              Staff Email Address
+              Email Address
             </label>
             <div style={{ position: 'relative', marginTop: '0.375rem' }}>
               <Mail size={18} style={{ position: 'absolute', left: '0.875rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
@@ -117,7 +150,7 @@ export const LoginPage: React.FC = () => {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="rudresh@queuecraft.edu"
+                placeholder="student@queuecraft.edu"
                 style={{
                   width: '100%',
                   padding: '0.75rem 0.875rem 0.75rem 2.6rem',
@@ -162,7 +195,7 @@ export const LoginPage: React.FC = () => {
             className="btn btn-primary btn-lg"
             style={{ width: '100%', marginTop: '0.5rem' }}
           >
-            <span>{loading ? 'Authenticating...' : 'Sign In to Staff Dashboard'}</span>
+            <span>{loading ? 'Authenticating...' : 'Sign In to Dashboard'}</span>
             <ArrowRight size={18} />
           </button>
         </form>
@@ -172,29 +205,37 @@ export const LoginPage: React.FC = () => {
           marginTop: '1.75rem',
           paddingTop: '1.25rem',
           borderTop: '1px solid var(--border-color)',
-          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.625rem',
         }}>
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem' }}>
-            <ShieldCheck size={14} /> Quick Demo Accounts:
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem' }}>
+            <ShieldCheck size={14} /> Quick Demo Credentials:
           </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <button
-              onClick={handleQuickDemoRudresh}
-              disabled={loading}
-              className="btn btn-secondary"
-              style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center' }}
-            >
-              Log In as Staff Rudresh (Library Printer)
-            </button>
-            <button
-              onClick={handleQuickDemoStudent}
-              disabled={loading}
-              className="btn btn-secondary"
-              style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center', backgroundColor: '#1e3a8a', color: '#93c5fd' }}
-            >
-              Log In as Student (Demo Student)
-            </button>
-          </div>
+          <button
+            onClick={handleQuickDemoStudent}
+            disabled={loading}
+            className="btn btn-primary"
+            style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center' }}
+          >
+            Log In as Demo Student
+          </button>
+          <button
+            onClick={handleQuickDemoRudresh}
+            disabled={loading}
+            className="btn btn-secondary"
+            style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center', marginBottom: '0.5rem' }}
+          >
+            Log In as Staff Rudresh (Library Printer)
+          </button>
+          <button
+            onClick={handleQuickDemoAdmin}
+            disabled={loading}
+            className="btn btn-secondary"
+            style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center' }}
+          >
+            Log In as Administrator (Global settings)
+          </button>
         </div>
       </div>
     </div>
