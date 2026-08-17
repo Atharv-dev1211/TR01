@@ -100,9 +100,9 @@ export const CurrentTokenCard: React.FC<CurrentTokenCardProps> = ({
               }}>
                 {token.token_number}
               </div>
-              {token.priority === 'HIGH' && (
+              {token.priority !== 'NORMAL' && (
                 <span className="badge badge-priority" style={{ marginTop: '0.5rem' }}>
-                  â˜… HIGH PRIORITY
+                  ★ {token.priority} PRIORITY
                 </span>
               )}
             </div>

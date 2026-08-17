@@ -83,7 +83,7 @@ export const WaitingQueueList: React.FC<WaitingQueueListProps> = ({
       {queue.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {queue.map((tkn, idx) => {
-            const isPriority = tkn.priority === 'HIGH';
+            const isPriority = tkn.priority !== 'NORMAL';
             return (
               <div
                 key={tkn.id}
@@ -127,7 +127,7 @@ export const WaitingQueueList: React.FC<WaitingQueueListProps> = ({
                       </span>
                       {isPriority && (
                         <span className="badge badge-priority">
-                          ★ HIGH PRIORITY
+                          ★ {tkn.priority} PRIORITY
                         </span>
                       )}
                     </div>

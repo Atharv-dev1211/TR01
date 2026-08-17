@@ -32,7 +32,7 @@ export interface Counter {
   estimated_wait_time?: number | null;
 }
 
-export type TokenPriority = 'NORMAL' | 'HIGH';
+export type TokenPriority = 'NORMAL' | 'HIGH' | 'PRIORITY' | 'URGENT';
 
 export type TokenStatus =
   | 'WAITING'
