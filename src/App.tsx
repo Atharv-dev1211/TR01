@@ -5,6 +5,7 @@ import { SocketProvider } from './context/SocketContext';
 import { LoginPage } from './pages/LoginPage';
 import { StaffDashboardPage } from './pages/StaffDashboardPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
+import { StudentDashboardPage } from './pages/StudentDashboardPage';
 
 const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -52,6 +53,7 @@ const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children
 };
 
 const ProtectedAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
 
   if (isLoading) {
@@ -65,6 +67,7 @@ const ProtectedAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children
         color: 'var(--text-secondary)',
       }}>
         Authenticating Administrator...
+        Authenticating Student User...
       </div>
     );
   }
@@ -74,6 +77,7 @@ const ProtectedAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   if (user?.role !== 'ADMIN') {
+  if (user?.role !== 'STUDENT') {
     return (
       <div style={{
         minHeight: '100vh',
@@ -88,6 +92,7 @@ const ProtectedAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children
         <h2>Access Denied</h2>
         <p style={{ color: 'var(--text-secondary)' }}>
           Only System Administrators can access this area.
+          This section is restricted to student accounts only.
         </p>
       </div>
     );
@@ -120,6 +125,11 @@ export const AppContent: React.FC = () => {
               <AdminDashboardPage />
             </SocketProvider>
           </ProtectedAdminRoute>
+        path="/student"
+        element={
+          <ProtectedStudentRoute>
+            <StudentDashboardPage />
+          </ProtectedStudentRoute>
         }
       />
       <Route
@@ -128,6 +138,8 @@ export const AppContent: React.FC = () => {
           isAuthenticated
             ? user?.role === 'ADMIN'
               ? <Navigate to="/admin" replace />
+            ? user?.role === 'STUDENT'
+              ? <Navigate to="/student" replace />
               : <Navigate to="/staff" replace />
             : <Navigate to="/login" replace />
         }
