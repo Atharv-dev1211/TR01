@@ -18,8 +18,12 @@ export const LoginPage: React.FC = () => {
     setLoading(true);
 
     try {
-      await login(email, password);
-      navigate('/staff');
+      const loggedInUser = await login(email, password);
+      if (loggedInUser?.role === 'STUDENT') {
+        navigate('/student');
+      } else {
+        navigate('/staff');
+      }
     } catch (err: any) {
       setError(err.message || 'Login failed. Check credentials.');
     } finally {
@@ -33,10 +37,25 @@ export const LoginPage: React.FC = () => {
     setError(null);
     setLoading(true);
     try {
-      await login('rudresh@queuecraft.edu', 'password123');
+      const loggedInUser = await login('rudresh@queuecraft.edu', 'password123');
       navigate('/staff');
     } catch (err: any) {
       setError(err.message || 'Demo login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQuickDemoStudent = async () => {
+    setEmail('student@queuecraft.edu');
+    setPassword('password123');
+    setError(null);
+    setLoading(true);
+    try {
+      const loggedInUser = await login('student@queuecraft.edu', 'password123');
+      navigate('/student');
+    } catch (err: any) {
+      setError(err.message || 'Demo student login failed');
     } finally {
       setLoading(false);
     }
@@ -156,16 +175,26 @@ export const LoginPage: React.FC = () => {
           textAlign: 'center',
         }}>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem' }}>
-            <ShieldCheck size={14} /> Quick Demo Staff Credentials:
+            <ShieldCheck size={14} /> Quick Demo Accounts:
           </p>
-          <button
-            onClick={handleQuickDemoRudresh}
-            disabled={loading}
-            className="btn btn-secondary"
-            style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center' }}
-          >
-            Log In as Staff Rudresh (Library Printer)
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <button
+              onClick={handleQuickDemoRudresh}
+              disabled={loading}
+              className="btn btn-secondary"
+              style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center' }}
+            >
+              Log In as Staff Rudresh (Library Printer)
+            </button>
+            <button
+              onClick={handleQuickDemoStudent}
+              disabled={loading}
+              className="btn btn-secondary"
+              style={{ width: '100%', fontSize: '0.825rem', justifyContent: 'center', backgroundColor: '#1e3a8a', color: '#93c5fd' }}
+            >
+              Log In as Student (Demo Student)
+            </button>
+          </div>
         </div>
       </div>
     </div>

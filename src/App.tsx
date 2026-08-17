@@ -4,6 +4,10 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
 import { LoginPage } from './pages/LoginPage';
 import { StaffDashboardPage } from './pages/StaffDashboardPage';
+import { StudentDashboardPage } from './pages/StudentDashboardPage';
+import { BookingPage } from './pages/BookingPage';
+import { ActiveTokenPage } from './pages/ActiveTokenPage';
+import { TokenHistoryPage } from './pages/TokenHistoryPage';
 
 const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -50,6 +54,51 @@ const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children
   return <>{children}</>;
 };
 
+const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, isLoading, user } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'var(--bg-dark)',
+        color: 'var(--text-secondary)',
+      }}>
+        Authenticating Student User...
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user?.role !== 'STUDENT') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: '1rem',
+        backgroundColor: 'var(--bg-dark)',
+        color: 'var(--text-primary)',
+      }}>
+        <h2>Access Denied</h2>
+        <p style={{ color: 'var(--text-secondary)' }}>
+          Staff accounts cannot access the Student Portal.
+        </p>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+};
+
 export const AppContent: React.FC = () => {
   return (
     <Routes>
@@ -64,7 +113,47 @@ export const AppContent: React.FC = () => {
           </ProtectedStaffRoute>
         }
       />
-      <Route path="*" element={<Navigate to="/staff" replace />} />
+      <Route
+        path="/student"
+        element={
+          <ProtectedStudentRoute>
+            <SocketProvider>
+              <StudentDashboardPage />
+            </SocketProvider>
+          </ProtectedStudentRoute>
+        }
+      />
+      <Route
+        path="/student/book/:serviceId/:counterId"
+        element={
+          <ProtectedStudentRoute>
+            <SocketProvider>
+              <BookingPage />
+            </SocketProvider>
+          </ProtectedStudentRoute>
+        }
+      />
+      <Route
+        path="/student/token/:tokenId?"
+        element={
+          <ProtectedStudentRoute>
+            <SocketProvider>
+              <ActiveTokenPage />
+            </SocketProvider>
+          </ProtectedStudentRoute>
+        }
+      />
+      <Route
+        path="/student/history"
+        element={
+          <ProtectedStudentRoute>
+            <SocketProvider>
+              <TokenHistoryPage />
+            </SocketProvider>
+          </ProtectedStudentRoute>
+        }
+      />
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
 };
