@@ -1,14 +1,34 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, Counter, AuthState } from '../types';
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  updateProfile,
+  User as FirebaseUser,
+} from 'firebase/auth';
+import { auth, isFirebaseConfigured } from '../config/firebase';
+import { User, Counter, AuthState, UserRole } from '../types';
 
 interface AuthContextType extends AuthState {
   counter: Counter | null;
   login: (email: string, password: string) => Promise<User>;
-  logout: () => void;
+  signup: (email: string, password: string, name?: string, role?: UserRole) => Promise<User>;
+  logout: () => Promise<void>;
   updateCounterStatus: (newStatus: Counter['status']) => void;
+  isFirebaseConfigured: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+function resolveRole(email?: string | null, customRole?: UserRole | null): UserRole {
+  if (customRole) return customRole;
+  if (!email) return 'STUDENT';
+  const lower = email.toLowerCase();
+  if (lower.startsWith('admin') || lower.includes('admin@')) return 'ADMIN';
+  if (lower.startsWith('rudresh') || lower.includes('staff') || lower.includes('@staff.')) return 'STAFF';
+  return 'STUDENT';
+}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -16,72 +36,144 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(localStorage.getItem('qc_token'));
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  // Helper to map Firebase user to QueueCraft User object
+  const mapFirebaseUser = (fbUser: FirebaseUser, explicitRole?: UserRole, explicitName?: string): User => {
+    const savedRole = (localStorage.getItem(`qc_role_${fbUser.uid}`) as UserRole) || explicitRole;
+    const finalRole = resolveRole(fbUser.email, savedRole);
+    const savedName = localStorage.getItem(`qc_name_${fbUser.uid}`) || explicitName;
+    const finalName = fbUser.displayName || savedName || fbUser.email?.split('@')[0] || 'User';
+
+    return {
+      id: fbUser.uid,
+      name: finalName,
+      email: fbUser.email || '',
+      role: finalRole,
+      created_at: fbUser.metadata.creationTime || new Date().toISOString(),
+    };
+  };
+
   useEffect(() => {
-    async function checkAuth() {
-      const storedToken = localStorage.getItem('qc_token');
-      if (!storedToken) {
-        setIsLoading(false);
-        return;
-      }
-
+    // Listen to Firebase Auth state changes
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       try {
-        const response = await fetch('/api/auth/me', {
-          headers: {
-            Authorization: `Bearer ${storedToken}`,
-          },
-        });
+        if (firebaseUser) {
+          const idToken = await firebaseUser.getIdToken();
+          const mappedUser = mapFirebaseUser(firebaseUser);
+          
+          setUser(mappedUser);
+          setToken(idToken);
+          localStorage.setItem('qc_token', idToken);
 
-        if (response.ok) {
-          const data = await response.json();
-          setUser(data.user);
-          setCounter(data.counter);
-          setToken(storedToken);
+          // Configure counter for staff operators
+          if (mappedUser.role === 'STAFF') {
+            setCounter({
+              id: 'c1',
+              service_id: 's1',
+              service_name: 'Library Printer',
+              name: 'Counter 1',
+              status: 'OPEN',
+              created_at: new Date().toISOString(),
+            });
+          } else {
+            setCounter(null);
+          }
         } else {
-          localStorage.removeItem('qc_token');
-          setToken(null);
           setUser(null);
+          setToken(null);
           setCounter(null);
+          localStorage.removeItem('qc_token');
         }
       } catch (err) {
-        console.error('Auth verification error:', err);
+        console.error('Error in onAuthStateChanged:', err);
+        setUser(null);
+        setToken(null);
+        setCounter(null);
       } finally {
         setIsLoading(false);
       }
-    }
+    });
 
-    checkAuth();
+    return () => unsubscribe();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<User> => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const mappedUser = mapFirebaseUser(userCredential.user);
+      const idToken = await userCredential.user.getIdToken();
 
-      const data = await response.json();
+      setUser(mappedUser);
+      setToken(idToken);
+      localStorage.setItem('qc_token', idToken);
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Login failed');
+      if (mappedUser.role === 'STAFF') {
+        setCounter({
+          id: 'c1',
+          service_id: 's1',
+          service_name: 'Library Printer',
+          name: 'Counter 1',
+          status: 'OPEN',
+          created_at: new Date().toISOString(),
+        });
       }
-
-      localStorage.setItem('qc_token', data.token);
-      setToken(data.token);
-      setUser(data.user);
-      setCounter(data.counter);
-      return data.user;
+      return mappedUser;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('qc_token');
-    setToken(null);
-    setUser(null);
-    setCounter(null);
+  const signup = async (
+    email: string,
+    password: string,
+    name?: string,
+    role: UserRole = 'STUDENT'
+  ): Promise<User> => {
+    setIsLoading(true);
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const fbUser = userCredential.user;
+
+      if (name) {
+        await updateProfile(fbUser, { displayName: name });
+        localStorage.setItem(`qc_name_${fbUser.uid}`, name);
+      }
+      localStorage.setItem(`qc_role_${fbUser.uid}`, role);
+
+      const mappedUser = mapFirebaseUser(fbUser, role, name);
+      const idToken = await fbUser.getIdToken();
+
+      setUser(mappedUser);
+      setToken(idToken);
+      localStorage.setItem('qc_token', idToken);
+
+      if (role === 'STAFF') {
+        setCounter({
+          id: 'c1',
+          service_id: 's1',
+          service_name: 'Library Printer',
+          name: 'Counter 1',
+          status: 'OPEN',
+          created_at: new Date().toISOString(),
+        });
+      }
+      return mappedUser;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const logout = async (): Promise<void> => {
+    setIsLoading(true);
+    try {
+      await signOut(auth);
+      localStorage.removeItem('qc_token');
+      setUser(null);
+      setToken(null);
+      setCounter(null);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const updateCounterStatus = (newStatus: Counter['status']) => {
@@ -99,8 +191,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthenticated: !!user && !!token,
         isLoading,
         login,
+        signup,
         logout,
         updateCounterStatus,
+        isFirebaseConfigured,
       }}
     >
       {children}

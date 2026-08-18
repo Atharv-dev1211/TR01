@@ -1,5 +1,8 @@
 import path from 'path';
 import fs from 'fs';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 // Database path setting (can be overridden for testing via process.env.DB_PATH)
 const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
@@ -33,8 +36,7 @@ export function getDb(): any {
       if (!fs.existsSync(dbDir)) {
         fs.mkdirSync(dbDir, { recursive: true });
       }
-      const req = typeof require !== 'undefined' ? require : (eval('require') as any);
-      const Database = req('better-sqlite3');
+      const Database = require('better-sqlite3');
       dbInstance = new Database(dbPath);
       // Enable Foreign Keys & Write-Ahead Logging for concurrency safety
       dbInstance.pragma('foreign_keys = ON');
