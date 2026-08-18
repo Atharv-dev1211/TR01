@@ -12,6 +12,9 @@ import adminRoutes from './routes/admin.js';
 import queueRoutes from './routes/queue.js';
 import studentRoutes from './routes/student.js';
 
+import { initializeSchema } from './db/schema.js';
+import { getDb } from './db/database.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -32,9 +35,14 @@ socketService.init(io);
 app.use(cors());
 app.use(express.json());
 
-// Initialize Database & Seed Demo Data
+// Initialize Database & Seed Demo Data if empty
 try {
-  seedDatabase();
+  initializeSchema();
+  const db = getDb();
+  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
+  if (!userCount || userCount.count === 0) {
+    seedDatabase();
+  }
 } catch (err) {
   console.error('[Database] Failed to initialize/seed database:', err);
 }
@@ -62,7 +70,7 @@ app.get('*', (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-if (process.env.NODE_ENV !== 'test') {
+if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
   server.listen(PORT, () => {
     console.log(`==================================================`);
     console.log(`🚀 QueueCraft Staff Operations Module Server Running`);
@@ -73,3 +81,4 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 export { app, server, io };
+export default app;
