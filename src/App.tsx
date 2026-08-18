@@ -214,13 +214,17 @@ export const AppContent: React.FC = () => {
       <Route
         path="*"
         element={
-          isAuthenticated
-            ? user?.role === 'ADMIN'
-              ? <Navigate to="/admin" replace />
-              : user?.role === 'STUDENT'
-                ? <Navigate to="/student" replace />
-                : <Navigate to="/staff" replace />
-            : <Navigate to="/login" replace />
+          isAuthenticated ? (
+            user?.role === 'ADMIN' ? (
+              <Navigate to="/admin" replace />
+            ) : user?.role === 'STUDENT' ? (
+              <Navigate to="/student" replace />
+            ) : (
+              <Navigate to="/staff" replace />
+            )
+          ) : (
+            <Navigate to="/login" replace />
+          )
         }
       />
     </Routes>

@@ -7,7 +7,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Database path setting (can be overridden for testing via process.env.DB_PATH)
-const dbPath = process.env.DB_PATH || path.join(process.env.INIT_CWD || process.cwd(), 'queuecraft.db');
+const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const defaultDbPath = isVercel
+  ? '/tmp/queuecraft.db'
+  : path.join(process.env.INIT_CWD || process.cwd(), 'queuecraft.db');
+
+const dbPath = process.env.DB_PATH || defaultDbPath;
 
 // Ensure directory exists if needed
 const dbDir = path.dirname(dbPath);
@@ -22,7 +27,9 @@ export function getDb(): Database.Database {
     dbInstance = new Database(dbPath);
     // Enable Foreign Keys & Write-Ahead Logging for concurrency safety
     dbInstance.pragma('foreign_keys = ON');
-    dbInstance.pragma('journal_mode = WAL');
+    if (!isVercel) {
+      dbInstance.pragma('journal_mode = WAL');
+    }
   }
   return dbInstance;
 }
