@@ -30,3 +30,20 @@ Thumbs.db
 # IDE files
 .vscode/
 .idea/
+
+# Python Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python Caching & Tests
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+

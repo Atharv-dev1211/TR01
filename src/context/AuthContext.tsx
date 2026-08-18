@@ -52,6 +52,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
+  // Helper to fetch assigned counter from backend for staff users
+  const fetchAssignedCounter = async (idToken: string): Promise<Counter | null> => {
+    try {
+      const res = await fetch('/api/staff/counter', {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          id: data.id,
+          service_id: data.service_id,
+          service_name: data.service_name || '',
+          name: data.name,
+          status: data.status,
+          created_at: data.created_at || new Date().toISOString(),
+        };
+      }
+    } catch (err) {
+      console.error('Failed to fetch assigned staff counter:', err);
+    }
+    return null;
+  };
+
   useEffect(() => {
     // Listen to Firebase Auth state changes
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -64,16 +87,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setToken(idToken);
           localStorage.setItem('qc_token', idToken);
 
-          // Configure counter for staff operators
+          // Configure counter dynamically for staff operators from backend
           if (mappedUser.role === 'STAFF') {
-            setCounter({
-              id: 'c1',
-              service_id: 's1',
-              service_name: 'Library Printer',
-              name: 'Counter 1',
-              status: 'OPEN',
-              created_at: new Date().toISOString(),
-            });
+            const assignedCounter = await fetchAssignedCounter(idToken);
+            setCounter(assignedCounter);
           } else {
             setCounter(null);
           }
@@ -108,14 +125,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('qc_token', idToken);
 
       if (mappedUser.role === 'STAFF') {
-        setCounter({
-          id: 'c1',
-          service_id: 's1',
-          service_name: 'Library Printer',
-          name: 'Counter 1',
-          status: 'OPEN',
-          created_at: new Date().toISOString(),
-        });
+        const assignedCounter = await fetchAssignedCounter(idToken);
+        setCounter(assignedCounter);
+      } else {
+        setCounter(null);
       }
       return mappedUser;
     } finally {
@@ -148,14 +161,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('qc_token', idToken);
 
       if (role === 'STAFF') {
-        setCounter({
-          id: 'c1',
-          service_id: 's1',
-          service_name: 'Library Printer',
-          name: 'Counter 1',
-          status: 'OPEN',
-          created_at: new Date().toISOString(),
-        });
+        const assignedCounter = await fetchAssignedCounter(idToken);
+        setCounter(assignedCounter);
+      } else {
+        setCounter(null);
       }
       return mappedUser;
     } finally {
