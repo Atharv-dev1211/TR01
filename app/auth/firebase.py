@@ -70,7 +70,7 @@ def verify_firebase_token(token: str) -> dict:
         try:
             decoded = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
             return {
-                "uid": decoded.get("id"),
+                "uid": decoded.get("id") or decoded.get("uid"),
                 "email": decoded.get("email"),
                 "name": decoded.get("name"),
                 "role": decoded.get("role")

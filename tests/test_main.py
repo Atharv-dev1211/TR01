@@ -392,6 +392,12 @@ def test_queue_position_and_people_ahead_recalculation():
     t2 = jwt.encode({"id": "usr-q2", "email": "q2@example.com", "name": "Q2"}, settings.jwt_secret, algorithm="HS256")
     t3 = jwt.encode({"id": "usr-q3", "email": "q3@example.com", "name": "Q3"}, settings.jwt_secret, algorithm="HS256")
 
+    import sqlite3
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-cnt';")
+    conn.commit()
+    conn.close()
+
     # Book T1, T2, T3
     r1 = client.post("/api/student/tokens/book", json={"service_id": "srv-cnt", "counter_id": "cntr-cnt-1"}, headers={"Authorization": f"Bearer {t1}"})
     r2 = client.post("/api/student/tokens/book", json={"service_id": "srv-cnt", "counter_id": "cntr-cnt-1"}, headers={"Authorization": f"Bearer {t2}"})
@@ -752,11 +758,12 @@ def test_concurrent_staff_next_operations():
     cursor.execute("UPDATE counters SET status = 'OPEN', assigned_staff_id = 'usr-staff-priya' WHERE id = 'cntr-lp-1';")
     # Clean up srv-lp active/serving tokens to avoid conflicts
     cursor.execute("UPDATE tokens SET status = 'COMPLETED' WHERE service_id = 'srv-lp' AND status = 'SERVING';")
-    # Seed 5 waiting tokens for srv-lp
+    # Seed 5 waiting tokens for srv-lp split across both counters
     for i in range(5):
+        target_cntr = 'cntr-lp-2' if i % 2 == 0 else 'cntr-lp-1'
         cursor.execute(f"""
             INSERT INTO tokens (id, token_number, student_id, student_name, service_id, counter_id, priority, status, created_at)
-            VALUES ('tkn-seq-{i}', 'LP-90{i}', 'usr-student-aarav', 'Aarav', 'srv-lp', 'cntr-lp-2', 'NORMAL', 'WAITING', '2026-08-19 00:00:0{i}');
+            VALUES ('tkn-seq-{i}', 'LP-90{i}', 'usr-student-aarav', 'Aarav', 'srv-lp', '{target_cntr}', 'NORMAL', 'WAITING', '2026-08-19 00:00:0{i}');
         """)
     conn.commit()
     conn.close()
@@ -841,7 +848,7 @@ def test_socket_real_time_events(run_app_server):
     time.sleep(0.1)
 
     # Clean up counters and serving tokens first
-    conn = sqlite3.connect("test_queuecraft.db")
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
     conn.execute("UPDATE tokens SET status = 'COMPLETED' WHERE counter_id = 'cntr-lp-2' AND status = 'SERVING';")
     conn.commit()
     conn.close()
@@ -1174,6 +1181,1200 @@ def test_staff_counter_endpoint():
     assert data["id"] == "cntr-lp-2"
     assert data["service_id"] == "srv-lp"
     assert data["assigned_staff_id"] == "usr-staff-rudresh"
+
+
+# Phase 6 Advanced Queue Engine Tests
+
+def test_dynamic_wait_cold_start_fallback():
+    """
+    Verify cold start fallback (5 minutes per person ahead) when no completed token history exists.
+    """
+    import sqlite3
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+    # Clean completed tokens for test service
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-test-cold';")
+    conn.commit()
+    
+    wait_time = queue_service.calculate_dynamic_wait_time(conn, "srv-test-cold", 3)
+    assert wait_time == 15  # 3 * 5 mins = 15 mins
+    conn.close()
+
+def test_dynamic_wait_historical_average():
+    """
+    Verify dynamic wait estimation uses historical service durations from completed tokens.
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    # Clean test service
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-test-dyn';")
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE service_id = 'srv-test-dyn';")
+
+    # Insert 2 completed tokens with 10-minute service durations for srv-test-dyn
+    now = datetime.now(timezone.utc)
+    t1_start = (now - timedelta(minutes=25)).strftime('%Y-%m-%d %H:%M:%S.%f')
+    t1_end = (now - timedelta(minutes=15)).strftime('%Y-%m-%d %H:%M:%S.%f')
+    t2_start = (now - timedelta(minutes=14)).strftime('%Y-%m-%d %H:%M:%S.%f')
+    t2_end = (now - timedelta(minutes=4)).strftime('%Y-%m-%d %H:%M:%S.%f')
+
+    conn.execute("""
+        INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status, started_at, completed_at)
+        VALUES ('tkn-hist-1', 'LP-H1', 'Student H1', 'srv-test-dyn', 'cntr-lp-2', 'COMPLETED', ?, ?);
+    """, (t1_start, t1_end))
+    conn.execute("""
+        INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status, started_at, completed_at)
+        VALUES ('tkn-hist-2', 'LP-H2', 'Student H2', 'srv-test-dyn', 'cntr-lp-2', 'COMPLETED', ?, ?);
+    """, (t2_start, t2_end))
+    conn.commit()
+
+    # With 2 people ahead and 1 open counter (cntr-lp-2), 2 * 10 = 20 mins
+    wait = queue_service.calculate_dynamic_wait_time(conn, "srv-test-dyn", 2)
+    assert wait == 20
+
+    # Cleanup
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-test-dyn';")
+    conn.commit()
+    conn.close()
+
+def test_dynamic_wait_multi_counter_capacity():
+    """
+    Verify that increasing active counter capacity reduces estimated wait time proportionally.
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    # Ensure two counters are open for srv-lp
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id IN ('cntr-lp-1', 'cntr-lp-2');")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp' AND status = 'COMPLETED';")
+
+    now = datetime.now(timezone.utc)
+    t1_start = (now - timedelta(minutes=20)).strftime('%Y-%m-%d %H:%M:%S.%f')
+    t1_end = (now - timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S.%f')
+    t2_start = (now - timedelta(minutes=30)).strftime('%Y-%m-%d %H:%M:%S.%f')
+    t2_end = (now - timedelta(minutes=20)).strftime('%Y-%m-%d %H:%M:%S.%f')
+    conn.execute("""
+        INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status, started_at, completed_at)
+        VALUES ('tkn-cap-1', 'LP-C1', 'Student C1', 'srv-lp', 'cntr-lp-2', 'COMPLETED', ?, ?),
+               ('tkn-cap-2', 'LP-C2', 'Student C2', 'srv-lp', 'cntr-lp-2', 'COMPLETED', ?, ?);
+    """, (t1_start, t1_end, t2_start, t2_end))
+    conn.commit()
+
+    # 4 people ahead, 10 min avg duration, 2 open counters: (4 * 10) / 2 = 20 mins
+    wait = queue_service.calculate_dynamic_wait_time(conn, "srv-lp", 4)
+    assert wait == 20
+
+    # Cleanup
+    conn.execute("DELETE FROM tokens WHERE id IN ('tkn-cap-1', 'tkn-cap-2');")
+    conn.execute("UPDATE counters SET status = 'CLOSED' WHERE id = 'cntr-lp-1';")
+    conn.commit()
+    conn.close()
+
+def test_priority_aging_base_ordering():
+    """
+    Verify base priority ordering: URGENT > HIGH/PRIORITY > NORMAL.
+    """
+    import sqlite3
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    # Clean existing waiting tokens for srv-lp
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp' AND status = 'WAITING';")
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, priority, status) VALUES ('t-norm', 'N-1', 'Norm', 'srv-lp', 'NORMAL', 'WAITING');")
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, priority, status) VALUES ('t-urg', 'U-1', 'Urg', 'srv-lp', 'URGENT', 'WAITING');")
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, priority, status) VALUES ('t-high', 'H-1', 'High', 'srv-lp', 'HIGH', 'WAITING');")
+    conn.commit()
+
+    queue = queue_service.get_waiting_queue(conn, "srv-lp")
+    assert queue[0]["id"] == "t-urg"
+    assert queue[1]["id"] == "t-high"
+    assert queue[2]["id"] == "t-norm"
+
+    conn.execute("DELETE FROM tokens WHERE id IN ('t-norm', 't-urg', 't-high');")
+    conn.commit()
+    conn.close()
+
+def test_priority_aging_starvation_prevention():
+    """
+    Verify Priority Aging starvation prevention:
+    A NORMAL token waiting for 12 minutes (+2 aging bonus -> effective priority 3)
+    takes precedence over a newly created URGENT token (effective priority 3, but later timestamp).
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp' AND status = 'WAITING';")
+    now = datetime.now(timezone.utc)
+    old_time = (now - timedelta(minutes=12)).strftime('%Y-%m-%d %H:%M:%S.%f')
+    new_time = now.strftime('%Y-%m-%d %H:%M:%S.%f')
+
+    # Aged normal token
+    conn.execute("""
+        INSERT INTO tokens (id, token_number, student_name, service_id, priority, status, created_at)
+        VALUES ('t-aged-norm', 'N-OLD', 'Old Normal', 'srv-lp', 'NORMAL', 'WAITING', ?);
+    """, (old_time,))
+
+    # Newly arrived urgent token
+    conn.execute("""
+        INSERT INTO tokens (id, token_number, student_name, service_id, priority, status, created_at)
+        VALUES ('t-new-urg', 'U-NEW', 'New Urgent', 'srv-lp', 'URGENT', 'WAITING', ?);
+    """, (new_time,))
+    conn.commit()
+
+    queue = queue_service.get_waiting_queue(conn, "srv-lp")
+    # Aged normal token must be served first!
+    assert queue[0]["id"] == "t-aged-norm"
+    assert queue[1]["id"] == "t-new-urg"
+
+    conn.execute("DELETE FROM tokens WHERE id IN ('t-aged-norm', 't-new-urg');")
+    conn.commit()
+    conn.close()
+
+def test_priority_aging_fifo_tie_breaking():
+    """
+    Verify that tokens with equal effective priority strictly preserve FIFO created_at ordering.
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp' AND status = 'WAITING';")
+    now = datetime.now(timezone.utc)
+    t1 = (now - timedelta(minutes=2)).strftime('%Y-%m-%d %H:%M:%S.%f')
+    t2 = (now - timedelta(minutes=1)).strftime('%Y-%m-%d %H:%M:%S.%f')
+
+    conn.execute("""
+        INSERT INTO tokens (id, token_number, student_name, service_id, priority, status, created_at)
+        VALUES ('t-fifo-1', 'N-1', 'First', 'srv-lp', 'NORMAL', 'WAITING', ?);
+    """, (t1,))
+    conn.execute("""
+        INSERT INTO tokens (id, token_number, student_name, service_id, priority, status, created_at)
+        VALUES ('t-fifo-2', 'N-2', 'Second', 'srv-lp', 'NORMAL', 'WAITING', ?);
+    """, (t2,))
+    conn.commit()
+
+    queue = queue_service.get_waiting_queue(conn, "srv-lp")
+    assert queue[0]["id"] == "t-fifo-1"
+    assert queue[1]["id"] == "t-fifo-2"
+
+    conn.execute("DELETE FROM tokens WHERE id IN ('t-fifo-1', 't-fifo-2');")
+    conn.commit()
+    conn.close()
+
+def test_multi_counter_load_balancing_auto_selection():
+    """
+    Verify select_best_counter_for_service picks the counter with lowest current load.
+    """
+    import sqlite3
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    # Ensure both counters are OPEN
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id IN ('cntr-lp-1', 'cntr-lp-2');")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+
+    # Add 2 waiting tokens to cntr-lp-1
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status) VALUES ('tb-1', 'L1', 'S1', 'srv-lp', 'cntr-lp-1', 'WAITING');")
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status) VALUES ('tb-2', 'L2', 'S2', 'srv-lp', 'cntr-lp-1', 'WAITING');")
+    conn.commit()
+    selected = queue_service.select_best_counter_for_service(conn, "srv-lp")
+    assert selected == "cntr-lp-2"
+
+    conn.execute("DELETE FROM tokens WHERE id IN ('tb-1', 'tb-2');")
+    conn.execute("UPDATE counters SET status = 'CLOSED' WHERE id = 'cntr-lp-1';")
+    conn.commit()
+    conn.close()
+
+def test_student_booking_auto_load_balancing():
+    """
+    Verify booking a token without explicit counter_id automatically routes to the best counter.
+    """
+    import jwt
+    import sqlite3
+    from app.config import settings
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id IN ('cntr-lp-1', 'cntr-lp-2');")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    # Put 1 token on cntr-lp-2
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status) VALUES ('tb-load-1', 'L1', 'S1', 'srv-lp', 'cntr-lp-2', 'WAITING');")
+    conn.commit()
+    conn.close()
+
+    student_jwt = jwt.encode(
+        {"id": "usr-student-auto-load", "email": "autoload@queuecraft.edu", "name": "Auto Load"},
+        settings.jwt_secret,
+        algorithm="HS256"
+    )
+
+    # Book token passing counter_id = None
+    res = client.post(
+        "/api/student/tokens/book",
+        json={"service_id": "srv-lp"},
+        headers={"Authorization": f"Bearer {student_jwt}"}
+    )
+    assert res.status_code == 200
+    token = res.json()["token"]
+    # cntr-lp-1 has load 0, cntr-lp-2 has load 1 -> should select cntr-lp-1
+    assert token["counter_id"] == "cntr-lp-1"
+
+    # Cleanup
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    conn.execute("UPDATE counters SET status = 'CLOSED' WHERE id = 'cntr-lp-1';")
+    conn.commit()
+    conn.close()
+
+def test_queue_invariant_no_double_serving():
+    """
+    Verify queue invariant: A counter cannot serve two tokens simultaneously.
+    """
+    import sqlite3
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id = 'cntr-lp-2';")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status) VALUES ('t-serv-1', 'S1', 'Serv 1', 'srv-lp', 'cntr-lp-2', 'SERVING');")
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, status) VALUES ('t-wait-1', 'S2', 'Wait 1', 'srv-lp', 'WAITING');")
+    conn.commit()
+
+    import pytest
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        queue_service.call_next_token(conn, "cntr-lp-2", "srv-lp")
+    assert exc_info.value.status_code == 400
+    assert "already has active serving token" in str(exc_info.value.detail)
+
+    conn.execute("DELETE FROM tokens WHERE id IN ('t-serv-1', 't-wait-1');")
+    conn.commit()
+    conn.close()
+
+def test_queue_invariant_cancelled_excluded():
+    """
+    Verify CANCELLED and SKIPPED tokens are strictly excluded from waiting queue functions.
+    """
+    import sqlite3
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, status) VALUES ('t-canc', 'C1', 'Cancel', 'srv-lp', 'CANCELLED');")
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, status) VALUES ('t-skip', 'K1', 'Skip', 'srv-lp', 'SKIPPED');")
+    conn.commit()
+
+    queue = queue_service.get_waiting_queue(conn, "srv-lp")
+    assert len(queue) == 0
+
+    conn.execute("DELETE FROM tokens WHERE id IN ('t-canc', 't-skip');")
+    conn.commit()
+    conn.close()
+
+def test_concurrent_booking_safety():
+    """
+    Verify atomic sequential token generation under concurrent booking requests.
+    """
+    import threading
+    import jwt
+    from app.config import settings
+
+    results = []
+    errors = []
+
+    def make_booking(user_idx):
+        try:
+            st_jwt = jwt.encode(
+                {"id": f"usr-conc-student-{user_idx}", "email": f"conc{user_idx}@queuecraft.edu", "name": f"Conc {user_idx}"},
+                settings.jwt_secret,
+                algorithm="HS256"
+            )
+            res = client.post(
+                "/api/student/tokens/book",
+                json={"service_id": "srv-lp", "counter_id": "cntr-lp-2"},
+                headers={"Authorization": f"Bearer {st_jwt}"}
+            )
+            if res.status_code == 200:
+                results.append(res.json()["token"]["token_number"])
+            else:
+                errors.append(res.text)
+        except Exception as e:
+            errors.append(str(e))
+
+    threads = [threading.Thread(target=make_booking, args=(i,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # All 5 bookings should succeed with unique sequential token numbers
+    assert len(results) == 5
+    assert len(set(results)) == 5
+
+
+# Additional Granular Phase 6 Queue Engine & Invariant Tests
+
+def test_priority_aging_multiple_intervals():
+    """
+    Verify a token waiting 25 minutes gets an aging bonus of +5 (effective priority 1 + 5 = 6).
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    now = datetime.now(timezone.utc)
+    ts_25m = (now - timedelta(minutes=25)).strftime('%Y-%m-%d %H:%M:%S.%f')
+
+    conn.execute("""
+        INSERT INTO tokens (id, token_number, student_name, service_id, priority, status, created_at)
+        VALUES ('t-25m', 'N-25', 'Wait 25m', 'srv-lp', 'NORMAL', 'WAITING', ?);
+    """, (ts_25m,))
+    conn.commit()
+
+    queue = queue_service.get_waiting_queue(conn, "srv-lp")
+    assert len(queue) == 1
+    assert queue[0]["id"] == "t-25m"
+
+    conn.execute("DELETE FROM tokens WHERE id = 't-25m';")
+    conn.commit()
+    conn.close()
+
+def test_priority_aging_zero_elapsed_mins():
+    """
+    Verify newly created token has aging bonus 0 (effective priority equals base priority).
+    """
+    import sqlite3
+    from datetime import datetime, timezone
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
+
+    conn.execute("""
+        INSERT INTO tokens (id, token_number, student_name, service_id, priority, status, created_at)
+        VALUES ('t-zero', 'N-0', 'Wait 0m', 'srv-lp', 'NORMAL', 'WAITING', ?);
+    """, (now,))
+    conn.commit()
+
+    queue = queue_service.get_waiting_queue(conn, "srv-lp")
+    assert len(queue) == 1
+    assert queue[0]["id"] == "t-zero"
+
+    conn.execute("DELETE FROM tokens WHERE id = 't-zero';")
+    conn.commit()
+    conn.close()
+
+def test_priority_aging_microsecond_timestamp_parsing():
+    """
+    Verify parse_timestamp handles various ISO format strings seamlessly.
+    """
+    from app.services.queue_service import parse_timestamp
+    dt1 = parse_timestamp("2026-08-19 01:00:00")
+    dt2 = parse_timestamp("2026-08-19T01:00:00.123456")
+    dt3 = parse_timestamp("2026-08-19 01:00:00.654321")
+    assert dt1.year == 2026
+    assert dt2.microsecond == 123456
+    assert dt3.microsecond == 654321
+
+def test_load_balancing_serving_token_counts_in_load():
+    """
+    Verify serving token on a counter counts towards its overall load score.
+    """
+    import sqlite3
+    from app.services import queue_service
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id IN ('cntr-lp-1', 'cntr-lp-2');")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+
+    # Put a SERVING token on cntr-lp-1 (load = 1) and 0 tokens on cntr-lp-2 (load = 0)
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status) VALUES ('t-serv-load', 'L1', 'S1', 'srv-lp', 'cntr-lp-1', 'SERVING');")
+    conn.commit()
+
+    best = queue_service.select_best_counter_for_service(conn, "srv-lp")
+    assert best == "cntr-lp-2"
+
+    conn.execute("DELETE FROM tokens WHERE id = 't-serv-load';")
+    conn.execute("UPDATE counters SET status = 'CLOSED' WHERE id = 'cntr-lp-1';")
+    conn.commit()
+    conn.close()
+
+def test_load_balancing_closed_counters_rejected():
+    """
+    Verify attempting to book a token directly to a CLOSED counter raises 400.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM tokens WHERE student_id = 'usr-student-demo';")
+    conn.execute("UPDATE counters SET status = 'CLOSED' WHERE id = 'cntr-lp-1';")
+    conn.commit()
+    conn.close()
+
+    res = client.post(
+        "/api/student/tokens/book",
+        json={"service_id": "srv-lp", "counter_id": "cntr-lp-1"}, # cntr-lp-1 is CLOSED
+        headers={"Authorization": "Bearer mock-token-student"}
+    )
+    assert res.status_code == 400
+    assert "not accepting new tokens" in res.json().get("message", res.json().get("detail", ""))
+
+def test_student_cannot_cancel_serving_token():
+    """
+    Verify student attempting to cancel a SERVING token gets 400 Bad Request.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM tokens WHERE student_id = 'usr-student-demo';")
+    conn.execute("INSERT INTO tokens (id, token_number, student_id, student_name, service_id, counter_id, status) VALUES ('t-canc-serv', 'C1', 'usr-student-demo', 'Demo Student', 'srv-lp', 'cntr-lp-2', 'SERVING');")
+    conn.commit()
+    conn.close()
+
+    res = client.patch(
+        "/api/student/tokens/t-canc-serv/cancel",
+        headers={"Authorization": "Bearer mock-token-student"}
+    )
+    assert res.status_code == 400
+    assert "Cannot cancel token with status: SERVING" in res.json().get("message", res.json().get("detail", ""))
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM tokens WHERE id = 't-canc-serv';")
+    conn.commit()
+    conn.close()
+
+def test_student_cannot_cancel_other_student_token():
+    """
+    Verify student attempting to cancel another student token gets 403 Forbidden.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM tokens WHERE student_id IN ('usr-student-demo', 'usr-other-owner');")
+    conn.execute("INSERT INTO tokens (id, token_number, student_id, student_name, service_id, counter_id, status) VALUES ('t-other-st', 'C1', 'usr-other-owner', 'Owner Student', 'srv-lp', 'cntr-lp-2', 'WAITING');")
+    conn.commit()
+    conn.close()
+
+    res = client.patch(
+        "/api/student/tokens/t-other-st/cancel",
+        headers={"Authorization": "Bearer mock-token-student"}
+    )
+    assert res.status_code == 403
+    assert "Forbidden: You do not own this token" in res.json().get("message", res.json().get("detail", ""))
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM tokens WHERE id = 't-other-st';")
+    conn.commit()
+    conn.close()
+
+def test_student_history_endpoint():
+    """
+    Verify GET /api/student/tokens/history returns historical tokens.
+    """
+    res = client.get("/api/student/tokens/history", headers={"Authorization": "Bearer mock-token-student"})
+    assert res.status_code == 200
+    data = res.json()
+    assert "tokens" in data
+    assert isinstance(data["tokens"], list)
+
+def test_student_active_token_endpoint():
+    """
+    Verify GET /api/student/tokens/active returns active token or null.
+    """
+    res = client.get("/api/student/tokens/active", headers={"Authorization": "Bearer mock-token-student"})
+    assert res.status_code == 200
+    data = res.json()
+    assert "token" in data
+
+def test_student_services_endpoint():
+    """
+    Verify GET /api/student/services returns services with operational counters.
+    """
+    res = client.get("/api/student/services", headers={"Authorization": "Bearer mock-token-student"})
+    assert res.status_code == 200
+    data = res.json()
+    assert "services" in data
+    assert len(data["services"]) > 0
+
+def test_student_counters_endpoint():
+    """
+    Verify GET /api/student/counters returns counter list.
+    """
+    res = client.get("/api/student/counters", headers={"Authorization": "Bearer mock-token-student"})
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)
+
+def test_staff_call_next_empty_queue_400():
+    """
+    Verify staff calling NEXT on an empty queue returns HTTP 400.
+    """
+    import sqlite3
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id = 'cntr-lp-2';")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp' AND status = 'WAITING';")
+    conn.commit()
+    conn.close()
+
+    res = client.post(
+        "/api/staff/counter/next",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert res.status_code == 400
+
+def test_staff_counter_not_found_404():
+    """
+    Verify queue service operation on non-existent counter returns 404.
+    """
+    import sqlite3
+    import pytest
+    from fastapi import HTTPException
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    with pytest.raises(HTTPException) as exc:
+        queue_service.call_next_token(conn, "non-existent-counter", "srv-lp")
+    assert exc.value.status_code == 404
+    conn.close()
+
+def test_staff_counter_closed_400():
+    """
+    Verify calling next token on a closed counter returns HTTP 400.
+    """
+    import sqlite3
+    import pytest
+    from fastapi import HTTPException
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("UPDATE counters SET status = 'CLOSED' WHERE id = 'cntr-lp-2';")
+    conn.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        queue_service.call_next_token(conn, "cntr-lp-2", "srv-lp")
+    assert exc.value.status_code == 400
+    assert "Counter is currently CLOSED" in str(exc.value.detail)
+    conn.close()
+
+def test_admin_create_service_validation():
+    """
+    Verify Admin POST /api/admin/services creates a service definition.
+    """
+    import sqlite3
+    admin_headers = {"Authorization": "Bearer mock-token-admin"}
+    res = client.post(
+        "/api/admin/services",
+        json={"id": "srv-test-adm", "name": "Admin Test Service", "code": "ATS", "description": "Test service"},
+        headers=admin_headers
+    )
+    assert res.status_code in (200, 201)
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM services WHERE id = 'srv-test-adm';")
+    conn.commit()
+    conn.close()
+
+def test_admin_update_service_validation():
+    """
+    Verify Admin PATCH /api/admin/services/{id} updates service details.
+    """
+    import sqlite3
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("INSERT OR REPLACE INTO services (id, name, code, description) VALUES ('srv-upd-tst', 'Old Name', 'SUT', 'Old');")
+    conn.commit()
+    conn.close()
+
+    admin_headers = {"Authorization": "Bearer mock-token-admin"}
+    res = client.patch(
+        "/api/admin/services/srv-upd-tst",
+        json={"name": "New Name", "description": "New Desc"},
+        headers=admin_headers
+    )
+    assert res.status_code == 200
+    assert res.json()["name"] == "New Name"
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM services WHERE id = 'srv-upd-tst';")
+    conn.commit()
+    conn.close()
+
+def test_admin_create_counter_validation():
+    """
+    Verify Admin POST /api/admin/counters creates counter definition.
+    """
+    import sqlite3
+    admin_headers = {"Authorization": "Bearer mock-token-admin"}
+    res = client.post(
+        "/api/admin/counters",
+        json={"id": "cntr-test-adm", "service_id": "srv-lp", "name": "Admin Counter Test", "status": "CLOSED"},
+        headers=admin_headers
+    )
+    assert res.status_code in (200, 201)
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM counters WHERE id = 'cntr-test-adm';")
+    conn.commit()
+    conn.close()
+
+def test_admin_update_counter_validation():
+    """
+    Verify Admin PATCH /api/admin/counters/{id} updates counter properties.
+    """
+    import sqlite3
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("INSERT OR REPLACE INTO counters (id, service_id, name, status) VALUES ('cntr-upd-tst', 'srv-lp', 'Old Counter', 'CLOSED');")
+    conn.commit()
+    conn.close()
+
+    admin_headers = {"Authorization": "Bearer mock-token-admin"}
+    res = client.patch(
+        "/api/admin/counters/cntr-upd-tst",
+        json={"name": "New Counter Name", "status": "OPEN"},
+        headers=admin_headers
+    )
+    assert res.status_code == 200
+    assert res.json()["name"] == "New Counter Name"
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM counters WHERE id = 'cntr-upd-tst';")
+    conn.commit()
+    conn.close()
+
+def test_admin_delete_counter_validation():
+    """
+    Verify Admin DELETE /api/admin/counters/{id} deletes counter.
+    """
+    import sqlite3
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("INSERT OR REPLACE INTO counters (id, service_id, name, status) VALUES ('cntr-del-tst', 'srv-lp', 'Del Counter', 'CLOSED');")
+    conn.commit()
+    conn.close()
+
+    admin_headers = {"Authorization": "Bearer mock-token-admin"}
+    res = client.delete(
+        "/api/admin/counters/cntr-del-tst",
+        headers=admin_headers
+    )
+    assert res.status_code == 200
+    assert res.json()["success"] is True
+
+def test_dynamic_wait_zero_and_negative_people_ahead():
+    """
+    Verify calculate_dynamic_wait_time returns 0 for <= 0 people ahead.
+    """
+    import sqlite3
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.row_factory = sqlite3.Row
+
+    assert queue_service.calculate_dynamic_wait_time(conn, "srv-lp", 0) == 0
+    assert queue_service.calculate_dynamic_wait_time(conn, "srv-lp", -5) == 0
+    conn.close()
+
+# PHASE 6 FINAL CORRECTION TESTS
+
+def test_effective_load_balancing_faster_counter_wins():
+    """
+    1. Faster counter beats shorter raw queue.
+    Counter A: 2 waiting tokens, 2.0 min average service -> 4.0 min effective wait
+    Counter B: 1 waiting token, 15.0 min average service -> 15.0 min effective wait
+    Expected: Counter A wins.
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    # Setup 2 OPEN counters for srv-lp
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id IN ('cntr-lp-1', 'cntr-lp-2');")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+
+    now = datetime.now(timezone.utc)
+    # Seed 2 completed tokens for cntr-lp-1 (2 min average)
+    for i in range(2):
+        st = (now - timedelta(minutes=20 + i*5)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        et = (now - timedelta(minutes=18 + i*5)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        conn.execute(f"INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status, started_at, completed_at) VALUES ('t-hist-a{i}', 'LPA{i}', 'Student', 'srv-lp', 'cntr-lp-1', 'COMPLETED', '{st}', '{et}');")
+
+    # Seed 2 completed tokens for cntr-lp-2 (15 min average)
+    for i in range(2):
+        st = (now - timedelta(minutes=60 + i*30)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        et = (now - timedelta(minutes=45 + i*30)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        conn.execute(f"INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status, started_at, completed_at) VALUES ('t-hist-b{i}', 'LPB{i}', 'Student', 'srv-lp', 'cntr-lp-2', 'COMPLETED', '{st}', '{et}');")
+
+    # Seed 2 waiting tokens at cntr-lp-1
+    for i in range(2):
+        conn.execute(f"INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status) VALUES ('t-wait-a{i}', 'WA{i}', 'Student', 'srv-lp', 'cntr-lp-1', 'WAITING');")
+
+    # Seed 1 waiting token at cntr-lp-2
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status) VALUES ('t-wait-b0', 'WB0', 'Student', 'srv-lp', 'cntr-lp-2', 'WAITING');")
+    conn.commit()
+
+    best = queue_service.select_best_counter_for_service(conn, "srv-lp")
+    assert best == "cntr-lp-1"
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    conn.commit()
+    conn.close()
+
+def test_effective_load_balancing_serving_token_impact():
+    """
+    2. Serving-token impact on effective wait.
+    Counter A: 1 serving, 0 waiting, 2 min average -> 2 min effective wait
+    Counter B: 0 serving, 1 waiting, 15 min average -> 15 min effective wait
+    Expected: Counter A wins.
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id IN ('cntr-lp-1', 'cntr-lp-2');")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+
+    now = datetime.now(timezone.utc)
+    # cntr-lp-1: 2 min avg
+    for i in range(2):
+        st = (now - timedelta(minutes=20 + i*5)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        et = (now - timedelta(minutes=18 + i*5)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        conn.execute(f"INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status, started_at, completed_at) VALUES ('t-hist-a{i}', 'LPA{i}', 'Student', 'srv-lp', 'cntr-lp-1', 'COMPLETED', '{st}', '{et}');")
+
+    # cntr-lp-2: 15 min avg
+    for i in range(2):
+        st = (now - timedelta(minutes=60 + i*30)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        et = (now - timedelta(minutes=45 + i*30)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        conn.execute(f"INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status, started_at, completed_at) VALUES ('t-hist-b{i}', 'LPB{i}', 'Student', 'srv-lp', 'cntr-lp-2', 'COMPLETED', '{st}', '{et}');")
+
+    # cntr-lp-1: 1 SERVING, 0 WAITING
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status) VALUES ('t-serv-a', 'SA', 'Student', 'srv-lp', 'cntr-lp-1', 'SERVING');")
+    # cntr-lp-2: 0 SERVING, 1 WAITING
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status) VALUES ('t-wait-b', 'WB', 'Student', 'srv-lp', 'cntr-lp-2', 'WAITING');")
+    conn.commit()
+
+    best = queue_service.select_best_counter_for_service(conn, "srv-lp")
+    assert best == "cntr-lp-1"
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    conn.commit()
+    conn.close()
+
+def test_effective_load_balancing_deterministic_tie_breaking():
+    """
+    3. Same effective wait deterministic tie-breaking: lower total load, then counter name/id.
+    """
+    import sqlite3
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id IN ('cntr-lp-1', 'cntr-lp-2');")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    conn.commit()
+
+    # Cold start (5.0 mins) for both counters with 0 tokens -> effective wait = 0.0 for both.
+    # Name ASC: cntr-lp-1 ("Printer Counter 1") vs cntr-lp-2 ("Printer Counter 2")
+    best = queue_service.select_best_counter_for_service(conn, "srv-lp")
+    assert best == "cntr-lp-1"
+
+    conn.close()
+
+def test_counter_specific_history_preferred():
+    """
+    4. Counter-specific history preferred over service-level history.
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    now = datetime.now(timezone.utc)
+    # Seed 2 completed for cntr-lp-1 (2 min duration)
+    for i in range(2):
+        st = (now - timedelta(minutes=20 + i*5)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        et = (now - timedelta(minutes=18 + i*5)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        conn.execute(f"INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status, started_at, completed_at) VALUES ('t-sp-a{i}', 'LPA{i}', 'Student', 'srv-lp', 'cntr-lp-1', 'COMPLETED', '{st}', '{et}');")
+    conn.commit()
+
+    dur = queue_service.get_historical_service_duration(conn, "srv-lp", counter_id="cntr-lp-1")
+    assert abs(dur - 2.0) < 0.1
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    conn.commit()
+    conn.close()
+
+def test_service_level_history_fallback():
+    """
+    5. Service-level history fallback when counter history < 2 samples.
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    now = datetime.now(timezone.utc)
+    # Seed 2 completed for cntr-lp-2 (7 min duration)
+    for i in range(2):
+        st = (now - timedelta(minutes=20 + i*10)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        et = (now - timedelta(minutes=13 + i*10)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        conn.execute(f"INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status, started_at, completed_at) VALUES ('t-fb-b{i}', 'LPB{i}', 'Student', 'srv-lp', 'cntr-lp-2', 'COMPLETED', '{st}', '{et}');")
+    conn.commit()
+
+    # Query duration for cntr-lp-1 (which has 0 samples) -> falls back to srv-lp service level (7 mins)
+    dur = queue_service.get_historical_service_duration(conn, "srv-lp", counter_id="cntr-lp-1")
+    assert abs(dur - 7.0) < 0.1
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    conn.commit()
+    conn.close()
+
+def test_cold_start_fallback():
+    """
+    6. Cold-start fallback (5.0 mins) when no history exists.
+    """
+    import sqlite3
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp' AND status = 'COMPLETED';")
+    conn.commit()
+
+    dur = queue_service.get_historical_service_duration(conn, "srv-lp", counter_id="cntr-lp-1")
+    assert dur == 5.0
+    conn.close()
+
+def test_closed_counter_excluded():
+    """
+    7. CLOSED counter excluded from load balancing.
+    """
+    import sqlite3
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("UPDATE counters SET status = 'CLOSED' WHERE id = 'cntr-lp-1';")
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id = 'cntr-lp-2';")
+    conn.commit()
+
+    best = queue_service.select_best_counter_for_service(conn, "srv-lp")
+    assert best == "cntr-lp-2"
+    conn.close()
+
+def test_maintenance_counter_excluded():
+    """
+    8. MAINTENANCE counter excluded from load balancing.
+    """
+    import sqlite3
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("UPDATE counters SET status = 'MAINTENANCE' WHERE id = 'cntr-lp-1';")
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id = 'cntr-lp-2';")
+    conn.commit()
+
+    best = queue_service.select_best_counter_for_service(conn, "srv-lp")
+    assert best == "cntr-lp-2"
+
+    conn.execute("UPDATE counters SET status = 'CLOSED' WHERE id = 'cntr-lp-1';")
+    conn.commit()
+    conn.close()
+
+def test_explicit_counter_assignment_preserved():
+    """
+    9. Explicit counter assignment preserved during student booking.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id = 'cntr-lp-1';")
+    conn.execute("DELETE FROM tokens WHERE student_id = 'usr-student-demo';")
+    conn.commit()
+    conn.close()
+
+    res = client.post(
+        "/api/student/tokens/book",
+        json={"service_id": "srv-lp", "counter_id": "cntr-lp-1"}, # Explicit counter selection
+        headers={"Authorization": "Bearer mock-token-student"}
+    )
+    assert res.status_code == 200
+    assert res.json()["token"]["counter_id"] == "cntr-lp-1"
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.execute("DELETE FROM tokens WHERE student_id = 'usr-student-demo';")
+    conn.commit()
+    conn.close()
+
+def test_counter_affinity_next_cannot_steal_token():
+    """
+    10. Counter A NEXT cannot steal explicitly assigned Counter B token.
+    """
+    import sqlite3
+    import pytest
+    from fastapi import HTTPException
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id IN ('cntr-lp-1', 'cntr-lp-2');")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+
+    # Insert Token B assigned explicitly to cntr-lp-2
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, priority, status) VALUES ('t-aff-b', 'LP-B1', 'Student B', 'srv-lp', 'cntr-lp-2', 'URGENT', 'WAITING');")
+    conn.commit()
+
+    # Staff at cntr-lp-1 calls next -> must NOT steal t-aff-b (assigned to cntr-lp-2)
+    with pytest.raises(HTTPException) as exc:
+        queue_service.call_next_token(conn, "cntr-lp-1", "srv-lp")
+    assert exc.value.status_code == 400
+    assert "empty for this counter" in str(exc.value.detail)
+
+    conn.execute("DELETE FROM tokens WHERE id = 't-aff-b';")
+    conn.commit()
+    conn.close()
+
+def test_auto_assigned_token_retains_counter_assignment():
+    """
+    11. Automatically assigned token retains its counter assignment permanently.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id IN ('cntr-lp-1', 'cntr-lp-2');")
+    conn.execute("DELETE FROM tokens WHERE student_id = 'usr-student-demo';")
+    conn.commit()
+    conn.close()
+
+    # Book token without explicit counter_id
+    res = client.post(
+        "/api/student/tokens/book",
+        json={"service_id": "srv-lp"},
+        headers={"Authorization": "Bearer mock-token-student"}
+    )
+    assert res.status_code == 200
+    assigned_counter = res.json()["token"]["counter_id"]
+    assert assigned_counter in ("cntr-lp-1", "cntr-lp-2")
+
+    # Fetch active token and assert counter_id matches
+    res_act = client.get("/api/student/tokens/active", headers={"Authorization": "Bearer mock-token-student"})
+    assert res_act.status_code == 200
+    assert res_act.json()["token"]["counter_id"] == assigned_counter
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.execute("DELETE FROM tokens WHERE student_id = 'usr-student-demo';")
+    conn.commit()
+    conn.close()
+
+def test_priority_aging_within_counter_queue():
+    """
+    12. Priority aging still works correctly within counter queue.
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("DELETE FROM tokens WHERE counter_id = 'cntr-lp-2' AND status = 'WAITING';")
+    now = datetime.now(timezone.utc)
+    t_old = (now - timedelta(minutes=12)).strftime('%Y-%m-%d %H:%M:%S.%f')
+
+    # Old NORMAL (+2 aging bonus -> effective 3) at cntr-lp-2
+    conn.execute(f"INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, priority, status, created_at) VALUES ('t-age-cntr-norm', 'LP-N', 'Student N', 'srv-lp', 'cntr-lp-2', 'NORMAL', 'WAITING', '{t_old}');")
+    # Brand new URGENT (effective 3) at cntr-lp-2
+    conn.execute("INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, priority, status) VALUES ('t-age-cntr-urg', 'LP-U', 'Student U', 'srv-lp', 'cntr-lp-2', 'URGENT', 'WAITING');")
+    conn.commit()
+
+    q = queue_service.get_waiting_queue(conn, "srv-lp", counter_id="cntr-lp-2")
+    assert len(q) == 2
+    assert q[0]["id"] == "t-age-cntr-norm" # Old NORMAL wins via FIFO tie-breaker
+
+    conn.execute("DELETE FROM tokens WHERE id IN ('t-age-cntr-norm', 't-age-cntr-urg');")
+    conn.commit()
+    conn.close()
+
+def test_concurrent_auto_bookings_safety():
+    """
+    13. Concurrent automatic bookings remain safe under thread locks.
+    """
+    import threading
+    import jwt
+    from app.config import settings
+
+    results = []
+    errors = []
+
+    def make_auto_booking(user_idx):
+        try:
+            st_jwt = jwt.encode(
+                {"id": f"usr-auto-conc-{user_idx}", "email": f"autoconc{user_idx}@queuecraft.edu", "name": f"Auto {user_idx}"},
+                settings.jwt_secret,
+                algorithm="HS256"
+            )
+            res = client.post(
+                "/api/student/tokens/book",
+                json={"service_id": "srv-lp"}, # Omitted counter_id -> auto load balance
+                headers={"Authorization": f"Bearer {st_jwt}"}
+            )
+            if res.status_code == 200:
+                results.append(res.json()["token"]["token_number"])
+            else:
+                errors.append(res.text)
+        except Exception as e:
+            errors.append(str(e))
+
+    threads = [threading.Thread(target=make_auto_booking, args=(i,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(results) == 5
+    assert len(set(results)) == 5
+
+def test_concurrent_next_operations_safety():
+    """
+    14. Concurrent NEXT operations across staff on different counters remain safe.
+    """
+    import jwt
+    import sqlite3
+    import threading
+    import queue
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.execute("UPDATE counters SET status = 'OPEN', assigned_staff_id = 'usr-staff-priya' WHERE id = 'cntr-lp-1';")
+    conn.execute("UPDATE counters SET status = 'OPEN' WHERE id = 'cntr-lp-2';")
+    conn.execute("UPDATE tokens SET status = 'COMPLETED' WHERE service_id = 'srv-lp' AND status = 'SERVING';")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp' AND status = 'WAITING';")
+
+    # Seed 1 token for cntr-lp-1 and 1 token for cntr-lp-2
+    conn.execute("INSERT INTO tokens (id, token_number, student_id, student_name, service_id, counter_id, status) VALUES ('t-conc-a1', 'LPA1', 'usr-st-a', 'Student A', 'srv-lp', 'cntr-lp-1', 'WAITING');")
+    conn.execute("INSERT INTO tokens (id, token_number, student_id, student_name, service_id, counter_id, status) VALUES ('t-conc-b1', 'LPB1', 'usr-st-b', 'Student B', 'srv-lp', 'cntr-lp-2', 'WAITING');")
+    conn.commit()
+    conn.close()
+
+    staff_rudresh_token = "mock-token-staff" # cntr-lp-2
+    staff_priya_token = jwt.encode(
+        {"id": "usr-staff-priya", "email": "priya@queuecraft.edu", "name": "Priya Singh", "role": "STAFF"},
+        settings.jwt_secret,
+        algorithm="HS256"
+    ) # cntr-lp-1
+
+    results = queue.Queue()
+
+    def run_next(auth):
+        try:
+            res = client.post(
+                "/api/staff/counter/next",
+                headers={"Authorization": f"Bearer {auth}"}
+            )
+            results.put(res)
+        except Exception as e:
+            results.put(e)
+
+    th1 = threading.Thread(target=run_next, args=(staff_rudresh_token,))
+    th2 = threading.Thread(target=run_next, args=(staff_priya_token,))
+    th1.start()
+    th2.start()
+    th1.join()
+    th2.join()
+
+    claimed_ids = []
+    while not results.empty():
+        res = results.get()
+        assert not isinstance(res, Exception)
+        assert res.status_code == 200
+        claimed_ids.append(res.json()["token"]["id"])
+
+    assert len(claimed_ids) == 2
+    assert set(claimed_ids) == {"t-conc-a1", "t-conc-b1"}
+
+def test_counter_status_race_safety():
+    """
+    15. Counter status race: Attempting NEXT on a CLOSED counter returns 400 Bad Request.
+    """
+    import sqlite3
+    import pytest
+    from fastapi import HTTPException
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.execute("UPDATE counters SET status = 'CLOSED' WHERE id = 'cntr-lp-1';")
+    conn.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        queue_service.call_next_token(conn, "cntr-lp-1", "srv-lp")
+    assert exc.value.status_code == 400
+    assert "CLOSED" in str(exc.value.detail)
+
+    conn.close()
+
+def test_sanity_clamping_corrupted_history():
+    """
+    16. Extreme or corrupted historical duration records (e.g. 500 min) are clamped to valid range.
+    """
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    from app.services import queue_service
+
+    conn = sqlite3.connect("test_queuecraft.db", timeout=30.0)
+    conn.row_factory = sqlite3.Row
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    now = datetime.now(timezone.utc)
+    # Insert 2 extreme completed records (500 min duration)
+    for i in range(2):
+        st = (now - timedelta(minutes=600 + i*10)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        et = (now - timedelta(minutes=100 + i*10)).strftime('%Y-%m-%d %H:%M:%S.%f')
+        conn.execute(f"INSERT INTO tokens (id, token_number, student_name, service_id, counter_id, status, started_at, completed_at) VALUES ('t-corr-{i}', 'LPC{i}', 'Student', 'srv-lp', 'cntr-lp-1', 'COMPLETED', '{st}', '{et}');")
+    conn.commit()
+
+    dur = queue_service.get_historical_service_duration(conn, "srv-lp", counter_id="cntr-lp-1")
+    # Ignore corrupted > 240m records -> falls back to cold-start 5.0 mins
+    assert dur == 5.0
+
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-lp';")
+    conn.commit()
+    conn.close()
+
+
 
 
 

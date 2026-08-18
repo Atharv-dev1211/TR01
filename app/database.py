@@ -15,13 +15,14 @@ def hash_password(password: str) -> str:
 def get_db() -> Generator[sqlite3.Connection, None, None]:
     """
     Generator dependency to yield a SQLite database connection.
-    Enforces foreign key constraints and WAL journal mode.
+    Enforces foreign key constraints, busy timeout, and WAL journal mode.
     """
-    conn = sqlite3.connect(settings.db_path, check_same_thread=False)
+    conn = sqlite3.connect(settings.db_path, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     
-    # Enable foreign keys
+    # Enable foreign keys and busy timeout
     conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     
     # Enable WAL mode for concurrent operations
     conn.execute("PRAGMA journal_mode = WAL;")
@@ -103,6 +104,8 @@ def initialize_schema() -> None:
         # INDEXES FOR MAX PERFORMANCE
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_service_status ON tokens(service_id, status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_counter_status ON tokens(counter_id, status);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_student_status ON tokens(student_id, status);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_completed ON tokens(service_id, status, completed_at);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_created_priority ON tokens(priority, created_at);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_counters_assigned_staff ON counters(assigned_staff_id);")
         
