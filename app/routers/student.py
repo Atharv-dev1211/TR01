@@ -3,7 +3,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from app.database import get_db
 from app.dependencies import require_student
-from app.models.schemas import ServicesListResponse, CounterDiscoveryResponse
+from app.models.schemas import (
+    ServicesListResponse, 
+    CounterDiscoveryResponse,
+    TokenBookRequest,
+    TokenBookResponse,
+    ActiveTokenResponse,
+    TokenHistoryListResponse
+)
+from app.services import student_service
 
 router = APIRouter()
 
@@ -91,3 +99,57 @@ def get_student_counters(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database query error: {str(e)}"
         )
+
+@router.post("/tokens/book", response_model=TokenBookResponse)
+def book_new_token(
+    payload: TokenBookRequest,
+    db: sqlite3.Connection = Depends(get_db),
+    current_user: dict = Depends(require_student)
+):
+    """
+    Creates a new queue token atomically for the authenticated student.
+    """
+    token = student_service.book_token(
+        db,
+        user_id=current_user["id"],
+        user_name=current_user["name"],
+        user_email=current_user["email"],
+        service_id=payload.service_id,
+        counter_id=payload.counter_id
+    )
+    return {"token": token}
+
+@router.get("/tokens/active", response_model=ActiveTokenResponse)
+def get_active_token(
+    db: sqlite3.Connection = Depends(get_db),
+    current_user: dict = Depends(require_student)
+):
+    """
+    Retrieves the current active token for the student.
+    """
+    token = student_service.get_active_token(db, user_id=current_user["id"])
+    return {"token": token}
+
+@router.get("/tokens/history", response_model=TokenHistoryListResponse)
+def get_token_history(
+    db: sqlite3.Connection = Depends(get_db),
+    current_user: dict = Depends(require_student)
+):
+    """
+    Retrieves past terminal tokens for the student.
+    """
+    tokens = student_service.get_token_history(db, user_id=current_user["id"])
+    return {"tokens": tokens}
+
+@router.patch("/tokens/{token_id}/cancel")
+@router.post("/tokens/{token_id}/cancel")
+def cancel_active_token(
+    token_id: str,
+    db: sqlite3.Connection = Depends(get_db),
+    current_user: dict = Depends(require_student)
+):
+    """
+    Cancels a student's active token. Supporting both PATCH and POST methods.
+    """
+    return student_service.cancel_token(db, user_id=current_user["id"], token_id=token_id)
+
