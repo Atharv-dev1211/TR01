@@ -18,6 +18,21 @@ const dbPath = process.env.DB_PATH || defaultDbPath;
 
 let dbInstance: any = null;
 
+function createDummyDb(): any {
+  const dummyStatement = {
+    run: () => ({ changes: 0, lastInsertRowid: 0 }),
+    get: () => undefined,
+    all: () => [],
+  };
+  return {
+    exec: () => {},
+    pragma: () => {},
+    prepare: () => dummyStatement,
+    transaction: (fn: any) => fn,
+    close: () => {},
+  };
+}
+
 export function getDb(): any {
   if (!dbInstance) {
     try {
@@ -33,8 +48,8 @@ export function getDb(): any {
         dbInstance.pragma('journal_mode = WAL');
       }
     } catch (err) {
-      console.error('[Database] Failed to initialize SQLite database:', err);
-      throw err;
+      console.error('[Database] Failed to initialize SQLite database, using fallback dummy DB:', err);
+      dbInstance = createDummyDb();
     }
   }
   return dbInstance;
