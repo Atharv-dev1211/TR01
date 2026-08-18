@@ -3,11 +3,14 @@ import uuid
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
 
-def calculate_estimated_wait(people_ahead: int) -> int:
+def calculate_estimated_wait(people_ahead: int, db: sqlite3.Connection = None, service_id: str = None) -> int:
     """
-    Calculates estimated wait time in minutes.
-    Currently uses 5 minutes per person ahead as a prototype placeholder.
+    Calculates dynamic wait time in minutes based on rolling historical service duration,
+    service capacity, and cold-start fallback.
     """
+    if db is not None and service_id is not None:
+        from app.services import queue_service
+        return queue_service.calculate_dynamic_wait_time(db, service_id, people_ahead)
     return people_ahead * 5
 
 def book_token(
@@ -16,12 +19,15 @@ def book_token(
     user_name: str,
     user_email: str,
     service_id: str,
-    counter_id: str
+    counter_id: str = None
 ) -> dict:
     """
     Atomically books a new queue token for a service and counter.
+    Supports automatic multi-counter load balancing if counter_id is omitted.
     Runs inside a strict SQLite BEGIN IMMEDIATE transaction boundary.
     """
+    from app.services import queue_service
+
     cursor = db.cursor()
     try:
         # Enforce write lock immediately to prevent sequence and active booking races
@@ -36,20 +42,25 @@ def book_token(
                 detail="Service not found"
             )
 
-        # 2. Verify counter exists and is operational
-        cursor.execute("SELECT status, name FROM counters WHERE id = ? AND service_id = ?;", (counter_id, service_id))
-        counter = cursor.fetchone()
-        if not counter:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Counter not found for this service"
-            )
-        
-        if counter["status"] in ("CLOSED", "MAINTENANCE"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Counter is currently not accepting new tokens"
-            )
+        # 2. Multi-counter load balancing or explicit counter validation
+        if not counter_id:
+            # Auto load balancing: pick counter with lowest load
+            target_counter_id = queue_service.select_best_counter_for_service(db, service_id)
+        else:
+            target_counter_id = counter_id
+            cursor.execute("SELECT status, name FROM counters WHERE id = ? AND service_id = ?;", (target_counter_id, service_id))
+            counter = cursor.fetchone()
+            if not counter:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Counter not found for this service"
+                )
+            
+            if counter["status"] in ("CLOSED", "MAINTENANCE"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Counter is currently not accepting new tokens"
+                )
 
         # 3. Check for any existing active token (global check matching Express Reference)
         cursor.execute("""
@@ -80,7 +91,7 @@ def book_token(
         cursor.execute("""
             INSERT INTO tokens (id, token_number, student_id, student_name, student_email, service_id, counter_id, status, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'WAITING', ?);
-        """, (token_id, token_number, user_id, user_name, user_email, service_id, counter_id, created_at_val))
+        """, (token_id, token_number, user_id, user_name, user_email, service_id, target_counter_id, created_at_val))
 
         db.commit()
 
@@ -94,10 +105,15 @@ def book_token(
         """, (token_id,))
         new_token = dict(cursor.fetchone())
         
-        # Default wait stats for new waiting token
-        new_token["people_ahead"] = 0
-        new_token["estimated_wait_time"] = 0
-        
+        # Populate real-time queue position and dynamic wait stats
+        details = queue_service.get_token_position_details(db, token_id)
+        if details:
+            new_token["people_ahead"] = details["people_ahead"]
+            new_token["estimated_wait_time"] = details["estimated_wait_time"]
+        else:
+            new_token["people_ahead"] = 0
+            new_token["estimated_wait_time"] = 0
+            
         return new_token
 
     except HTTPException:
@@ -113,11 +129,10 @@ def book_token(
 def get_active_token(db: sqlite3.Connection, user_id: str) -> dict | None:
     """
     Retrieves the current active token (WAITING, SERVING, HELD) for a student,
-    including real-time queue position and wait estimates.
+    including real-time queue position and dynamic wait estimates.
     """
     cursor = db.cursor()
     try:
-        # Get active token
         cursor.execute("""
             SELECT t.*, s.name as service_name, c.name as counter_name
             FROM tokens t
@@ -133,7 +148,6 @@ def get_active_token(db: sqlite3.Connection, user_id: str) -> dict | None:
             
         token = dict(row)
         
-        # Calculate queue stats using unified queue engine logic
         from app.services import queue_service
         details = queue_service.get_token_position_details(db, token["id"])
         if details:
@@ -179,7 +193,6 @@ def cancel_token(db: sqlite3.Connection, user_id: str, token_id: str) -> dict:
     """
     cursor = db.cursor()
     try:
-        # Fetch token to verify existence and check details
         cursor.execute("""
             SELECT student_id, status, counter_id, service_id, token_number
             FROM tokens 
@@ -193,26 +206,24 @@ def cancel_token(db: sqlite3.Connection, user_id: str, token_id: str) -> dict:
                 detail="Token not found"
             )
             
-        # Verify ownership
         if token["student_id"] != user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden: You do not own this token"
             )
             
-        # Verify state transition
         if token["status"] not in ("WAITING", "HELD"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot cancel token with status: {token['status']}"
             )
             
-        # Update token state to CANCELLED
+        now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')
         cursor.execute("""
             UPDATE tokens 
-            SET status = 'CANCELLED', completed_at = CURRENT_TIMESTAMP
+            SET status = 'CANCELLED', completed_at = ?
             WHERE id = ?;
-        """, (token_id,))
+        """, (now, token_id))
         db.commit()
         
         return {

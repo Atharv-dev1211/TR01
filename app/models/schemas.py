@@ -37,7 +37,7 @@ class CounterDiscoveryResponse(CounterBase):
 # Token schemas for Phase 2
 class TokenBookRequest(BaseModel):
     service_id: str
-    counter_id: str
+    counter_id: Optional[str] = None
 
 class TokenResponseDetail(BaseModel):
     id: str
