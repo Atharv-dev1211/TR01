@@ -36,17 +36,28 @@ socketService.init(io);
 app.use(cors());
 app.use(express.json());
 
-// Initialize Database & Seed Demo Data if empty
-try {
-  initializeSchema();
-  const db = getDb();
-  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
-  if (!userCount || userCount.count === 0) {
-    seedDatabase();
+let dbInitDone = false;
+function ensureDbInitialized() {
+  if (dbInitDone) return;
+  try {
+    initializeSchema();
+    const db = getDb();
+    const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
+    if (!userCount || userCount.count === 0) {
+      seedDatabase();
+    }
+    dbInitDone = true;
+  } catch (err) {
+    console.error('[Database] Failed to initialize/seed database:', err);
   }
-} catch (err) {
-  console.error('[Database] Failed to initialize/seed database:', err);
 }
+
+app.use('/api', (req, res, next) => {
+  if (req.path !== '/health') {
+    ensureDbInitialized();
+  }
+  next();
+});
 
 // API Routes
 app.use('/api/auth', authRoutes);

@@ -1,7 +1,9 @@
-import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,21 +16,25 @@ const defaultDbPath = isVercel
 
 const dbPath = process.env.DB_PATH || defaultDbPath;
 
-// Ensure directory exists if needed
-const dbDir = path.dirname(dbPath);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
+let dbInstance: any = null;
 
-let dbInstance: Database.Database | null = null;
-
-export function getDb(): Database.Database {
+export function getDb(): any {
   if (!dbInstance) {
-    dbInstance = new Database(dbPath);
-    // Enable Foreign Keys & Write-Ahead Logging for concurrency safety
-    dbInstance.pragma('foreign_keys = ON');
-    if (!isVercel) {
-      dbInstance.pragma('journal_mode = WAL');
+    try {
+      const dbDir = path.dirname(dbPath);
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
+      }
+      const Database = require('better-sqlite3');
+      dbInstance = new Database(dbPath);
+      // Enable Foreign Keys & Write-Ahead Logging for concurrency safety
+      dbInstance.pragma('foreign_keys = ON');
+      if (!isVercel) {
+        dbInstance.pragma('journal_mode = WAL');
+      }
+    } catch (err) {
+      console.error('[Database] Failed to initialize SQLite database:', err);
+      throw err;
     }
   }
   return dbInstance;
@@ -36,7 +42,9 @@ export function getDb(): Database.Database {
 
 export function closeDb(): void {
   if (dbInstance) {
-    dbInstance.close();
+    try {
+      dbInstance.close();
+    } catch {}
     dbInstance = null;
   }
 }
