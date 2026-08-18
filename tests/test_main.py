@@ -803,5 +803,379 @@ def test_concurrent_staff_next_operations():
     assert len(claimed_ids) == 2
     assert len(set(claimed_ids)) == 2
 
+# Phase 4 Socket.IO Synchronization Tests
+
+@pytest.fixture(scope="module")
+def run_app_server():
+    import time
+    import threading
+    import uvicorn
+    server_thread = threading.Thread(
+        target=lambda: uvicorn.run(app, host="127.0.0.1", port=5005, log_level="error"),
+        daemon=True
+    )
+    server_thread.start()
+    time.sleep(0.5)  # Let server bind and start
+    yield "http://127.0.0.1:5005"
+
+def test_socket_real_time_events(run_app_server):
+    import time
+    import jwt
+    import sqlite3
+    import socketio
+
+    server_url = run_app_server
+    sio_client = socketio.Client()
+    events_received = []
+
+    @sio_client.on('*')
+    def catch_all(event, data):
+        events_received.append((event, data))
+
+    # 1. Connect
+    sio_client.connect(server_url, socketio_path='socket.io')
+
+    # 2. Join Rooms
+    sio_client.emit('join_service', 'srv-lp')
+    sio_client.emit('join_counter', 'cntr-lp-2')
+    time.sleep(0.1)
+
+    # Clean up counters and serving tokens first
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("UPDATE tokens SET status = 'COMPLETED' WHERE counter_id = 'cntr-lp-2' AND status = 'SERVING';")
+    conn.commit()
+    conn.close()
+
+    # 3. Trigger student book via REST API
+    student_jwt = jwt.encode(
+        {"id": "usr-student-temp-socket", "email": "temp-socket@queuecraft.edu", "name": "Temp Socket"},
+        settings.jwt_secret,
+        algorithm="HS256"
+    )
+    book_res = client.post(
+        "/api/student/tokens/book",
+        json={"service_id": "srv-lp", "counter_id": "cntr-lp-2"},
+        headers={"Authorization": f"Bearer {student_jwt}"}
+    )
+    assert book_res.status_code == 200
+    token = book_res.json()["token"]
+
+    time.sleep(0.2)
+
+    # Verify book emits
+    event_names = [e[0] for e in events_received]
+    assert 'QUEUE_UPDATED' in event_names
+    assert 'queueUpdate' in event_names
+    
+    create_payload = [e[1] for e in events_received if e[0] == 'QUEUE_UPDATED'][-1]
+    assert create_payload["action"] == "CREATE"
+    assert create_payload["tokenId"] == token["id"]
+
+    events_received.clear()
+
+    # 4. Trigger NEXT operation via REST API
+    next_res = client.post(
+        "/api/staff/counter/next",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert next_res.status_code == 200
+    called_token = next_res.json()["token"]
+
+    time.sleep(0.2)
+
+    # Verify next emits
+    event_names = [e[0] for e in events_received]
+    assert 'TOKEN_CALLED' in event_names
+    assert 'token_called' in event_names
+
+    events_received.clear()
+
+    # 5. Trigger COMPLETE operation via REST API
+    comp_res = client.post(
+        f"/api/staff/tokens/{called_token['id']}/complete",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert comp_res.status_code == 200
+
+    time.sleep(0.2)
+
+    # Verify complete emits
+    event_names = [e[0] for e in events_received]
+    assert 'TOKEN_COMPLETED' in event_names
+    assert 'token_completed' in event_names
+
+    events_received.clear()
+
+    # 6. Trigger counter status change via REST API
+    status_res = client.patch(
+        "/api/staff/counter/status",
+        json={"status": "BUSY"},
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert status_res.status_code == 200
+
+    time.sleep(0.2)
+
+    # Verify status changed emits
+    event_names = [e[0] for e in events_received]
+    assert 'COUNTER_STATUS_CHANGED' in event_names
+    assert 'counter_status_changed' in event_names
+
+    # Clean up and reset counter status to OPEN
+    client.patch(
+        "/api/staff/counter/status",
+        json={"status": "OPEN"},
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+
+    sio_client.disconnect()
+
+
+# Phase 5 Admin & Staff Counter Resolution Tests
+
+def test_admin_auth_restrictions():
+    """
+    Verify that unauthenticated, student, and staff requests to admin endpoints are blocked with 403,
+    and admin requests are permitted.
+    """
+    # Unauthenticated
+    res_unauth = client.get("/api/admin/dashboard")
+    assert res_unauth.status_code == 403
+
+    # Student
+    res_student = client.get(
+        "/api/admin/dashboard",
+        headers={"Authorization": "Bearer mock-token-student"}
+    )
+    assert res_student.status_code == 403
+
+    # Staff
+    res_staff = client.get(
+        "/api/admin/dashboard",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert res_staff.status_code == 403
+
+    # Admin
+    res_admin = client.get(
+        "/api/admin/dashboard",
+        headers={"Authorization": "Bearer mock-token-admin"}
+    )
+    assert res_admin.status_code == 200
+
+def test_admin_dashboard_stats():
+    """
+    Verify that GET /api/admin/dashboard returns expected database stats schema.
+    """
+    res = client.get(
+        "/api/admin/dashboard",
+        headers={"Authorization": "Bearer mock-token-admin"}
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "services_count" in data
+    assert "active_counters_count" in data
+    assert "waiting_tokens_count" in data
+    assert "currently_serving_count" in data
+    assert "completed_today_count" in data
+    assert "skipped_today_count" in data
+    assert "cancelled_today_count" in data
+    assert "avg_waiting_time_minutes" in data
+
+def test_admin_user_crud():
+    """
+    Verify Admin User CRUD operations: list, create, duplicate email rejection, update, and delete safety.
+    """
+    admin_headers = {"Authorization": "Bearer mock-token-admin"}
+
+    # 1. List users
+    res_list = client.get("/api/admin/users", headers=admin_headers)
+    assert res_list.status_code == 200
+    users = res_list.json()
+    assert isinstance(users, list)
+    assert len(users) > 0
+
+    # 2. Create user
+    new_user_payload = {
+        "name": "Test Operator",
+        "email": "testop@queuecraft.edu",
+        "password": "securepassword123",
+        "role": "STAFF"
+    }
+    res_create = client.post("/api/admin/users", json=new_user_payload, headers=admin_headers)
+    assert res_create.status_code == 201
+    created_user = res_create.json()
+    assert created_user["email"] == "testop@queuecraft.edu"
+    assert created_user["role"] == "STAFF"
+
+    # 3. Duplicate email rejection
+    res_dup = client.post("/api/admin/users", json=new_user_payload, headers=admin_headers)
+    assert res_dup.status_code == 400
+
+    # 4. Update user
+    res_update = client.patch(
+        f"/api/admin/users/{created_user['id']}",
+        json={"name": "Test Operator Updated", "role": "STUDENT"},
+        headers=admin_headers
+    )
+    assert res_update.status_code == 200
+    assert res_update.json()["name"] == "Test Operator Updated"
+    assert res_update.json()["role"] == "STUDENT"
+
+    # 5. Delete user
+    res_del = client.delete(f"/api/admin/users/{created_user['id']}", headers=admin_headers)
+    assert res_del.status_code == 200
+    assert res_del.json()["success"] is True
+
+    # 6. Delete self rejection (mock admin user id is usr-admin-demo)
+    res_self_del = client.delete("/api/admin/users/usr-admin-demo", headers=admin_headers)
+    assert res_self_del.status_code == 400
+
+def test_admin_service_crud():
+    """
+    Verify Admin Service CRUD operations: list, create, duplicate shortcode rejection, update, and delete safety checks.
+    """
+    admin_headers = {"Authorization": "Bearer mock-token-admin"}
+
+    # 1. List services
+    res_list = client.get("/api/admin/services", headers=admin_headers)
+    assert res_list.status_code == 200
+    services = res_list.json()
+    assert len(services) > 0
+
+    # 2. Create service
+    new_srv_payload = {
+        "name": "Financial Aid Desk",
+        "code": "FIN",
+        "description": "Student loans and scholarships assistance"
+    }
+    res_create = client.post("/api/admin/services", json=new_srv_payload, headers=admin_headers)
+    assert res_create.status_code == 201
+    created_srv = res_create.json()
+    assert created_srv["code"] == "FIN"
+
+    # 3. Duplicate shortcode rejection
+    res_dup = client.post("/api/admin/services", json=new_srv_payload, headers=admin_headers)
+    assert res_dup.status_code == 400
+
+    # 4. Update service
+    res_update = client.patch(
+        f"/api/admin/services/{created_srv['id']}",
+        json={"name": "Financial Aid & Grants"},
+        headers=admin_headers
+    )
+    assert res_update.status_code == 200
+    assert res_update.json()["name"] == "Financial Aid & Grants"
+
+    # 5. Delete newly created service without linked counters/tokens
+    res_del = client.delete(f"/api/admin/services/{created_srv['id']}", headers=admin_headers)
+    assert res_del.status_code == 200
+
+    # 6. Delete service with linked counters rejection (srv-lp has linked counters)
+    res_del_linked = client.delete("/api/admin/services/srv-lp", headers=admin_headers)
+    assert res_del_linked.status_code == 400
+
+def test_admin_counter_crud_and_staff_assignment():
+    """
+    Verify Admin Counter CRUD and Staff Assignment exclusivity.
+    """
+    admin_headers = {"Authorization": "Bearer mock-token-admin"}
+
+    # 1. List counters
+    res_list = client.get("/api/admin/counters", headers=admin_headers)
+    assert res_list.status_code == 200
+    counters = res_list.json()
+    assert len(counters) > 0
+
+    # 2. Create counter under Library Printer (srv-lp)
+    new_cntr_payload = {
+        "name": "Printer Counter 3",
+        "service_id": "srv-lp",
+        "status": "CLOSED"
+    }
+    res_create = client.post("/api/admin/counters", json=new_cntr_payload, headers=admin_headers)
+    assert res_create.status_code == 201
+    created_cntr = res_create.json()
+    assert created_cntr["name"] == "Printer Counter 3"
+
+    # 3. Update counter
+    res_update = client.patch(
+        f"/api/admin/counters/{created_cntr['id']}",
+        json={"status": "MAINTENANCE"},
+        headers=admin_headers
+    )
+    assert res_update.status_code == 200
+    assert res_update.json()["status"] == "MAINTENANCE"
+
+    # 4. Assign staff operator (usr-staff-rudresh) to the new counter
+    res_assign = client.patch(
+        f"/api/admin/counters/{created_cntr['id']}/assign-staff",
+        json={"staffId": "usr-staff-rudresh"},
+        headers=admin_headers
+    )
+    assert res_assign.status_code == 200
+    assert res_assign.json()["assigned_staff_id"] == "usr-staff-rudresh"
+
+    # 5. Reject non-staff user assignment
+    res_invalid_assign = client.patch(
+        f"/api/admin/counters/{created_cntr['id']}/assign-staff",
+        json={"staffId": "usr-student-aarav"},
+        headers=admin_headers
+    )
+    assert res_invalid_assign.status_code == 400
+
+    # Re-assign back to original counter (cntr-lp-2) for test consistency
+    client.patch(
+        "/api/admin/counters/cntr-lp-2/assign-staff",
+        json={"staffId": "usr-staff-rudresh"},
+        headers=admin_headers
+    )
+
+    # 6. Delete created counter
+    res_del = client.delete(f"/api/admin/counters/{created_cntr['id']}", headers=admin_headers)
+    assert res_del.status_code == 200
+
+def test_admin_live_monitor_and_analytics():
+    """
+    Verify GET /api/admin/live-monitor and GET /api/admin/analytics payloads.
+    """
+    admin_headers = {"Authorization": "Bearer mock-token-admin"}
+
+    # 1. Live Monitor
+    res_monitor = client.get("/api/admin/live-monitor", headers=admin_headers)
+    assert res_monitor.status_code == 200
+    monitor_data = res_monitor.json()
+    assert isinstance(monitor_data, list)
+    assert len(monitor_data) > 0
+    first_item = monitor_data[0]
+    assert "counter_id" in first_item
+    assert "counter_name" in first_item
+    assert "service_name" in first_item
+
+    # 2. Analytics
+    res_analytics = client.get("/api/admin/analytics", headers=admin_headers)
+    assert res_analytics.status_code == 200
+    analytics_data = res_analytics.json()
+    assert "summary" in analytics_data
+    assert "service_distribution" in analytics_data
+    assert "counter_activity" in analytics_data
+    assert "hourly_distribution" in analytics_data
+
+def test_staff_counter_endpoint():
+    """
+    Verify GET /api/staff/counter returns the assigned counter cntr-lp-2 for the staff member.
+    """
+    res = client.get(
+        "/api/staff/counter",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["id"] == "cntr-lp-2"
+    assert data["service_id"] == "srv-lp"
+    assert data["assigned_staff_id"] == "usr-staff-rudresh"
+
+
+
 
 

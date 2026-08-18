@@ -208,6 +208,14 @@ def call_next_queue_token(
     
     dashboard = get_dashboard_data(db, updated_counter)
     
+    # Emit socket updates after database commit
+    from app.services import socket_service
+    socket_service.emit_token_called(counter_id=counter["id"], token=token)
+    socket_service.emit_queue_updated(
+        service_id=counter["service_id"],
+        payload={"action": "CALL_NEXT", "tokenId": token["id"], "counterId": counter["id"]}
+    )
+    
     return {
         "message": f"Token {token['token_number']} called successfully",
         "token": token,
@@ -225,6 +233,14 @@ def complete_serving_token(
     """
     token = queue_service.complete_token(db, token_id=token_id, counter_id=counter["id"])
     dashboard = get_dashboard_data(db, counter)
+    
+    # Emit socket updates after database commit
+    from app.services import socket_service
+    socket_service.emit_token_completed(counter_id=counter["id"], token=token)
+    socket_service.emit_queue_updated(
+        service_id=counter["service_id"],
+        payload={"action": "COMPLETE", "tokenId": token["id"], "counterId": counter["id"]}
+    )
     
     return {
         "message": f"Token {token['token_number']} completed",
@@ -244,6 +260,14 @@ def place_token_on_hold(
     token = queue_service.hold_token(db, token_id=token_id, counter_id=counter["id"])
     dashboard = get_dashboard_data(db, counter)
     
+    # Emit socket updates after database commit
+    from app.services import socket_service
+    socket_service.emit_token_held(counter_id=counter["id"], token=token)
+    socket_service.emit_queue_updated(
+        service_id=counter["service_id"],
+        payload={"action": "HOLD", "tokenId": token["id"], "counterId": counter["id"]}
+    )
+    
     return {
         "message": f"Token {token['token_number']} placed on hold",
         "token": token,
@@ -262,6 +286,14 @@ def resume_held_token(
     token = queue_service.resume_token(db, token_id=token_id, counter_id=counter["id"])
     dashboard = get_dashboard_data(db, counter)
     
+    # Emit socket updates after database commit
+    from app.services import socket_service
+    socket_service.emit_token_resumed(counter_id=counter["id"], token=token)
+    socket_service.emit_queue_updated(
+        service_id=counter["service_id"],
+        payload={"action": "RESUME", "tokenId": token["id"], "counterId": counter["id"]}
+    )
+    
     return {
         "message": f"Token {token['token_number']} resumed to SERVING",
         "token": token,
@@ -279,6 +311,14 @@ def skip_active_token(
     """
     token = queue_service.skip_token(db, token_id=token_id, counter_id=counter["id"])
     dashboard = get_dashboard_data(db, counter)
+    
+    # Emit socket updates after database commit
+    from app.services import socket_service
+    socket_service.emit_token_skipped(counter_id=counter["id"], token=token)
+    socket_service.emit_queue_updated(
+        service_id=counter["service_id"],
+        payload={"action": "SKIP", "tokenId": token["id"], "counterId": counter["id"]}
+    )
     
     return {
         "message": f"Token {token['token_number']} skipped",
@@ -311,6 +351,14 @@ def toggle_counter_status(
     updated_counter = dict(cursor.fetchone())
     
     dashboard = get_dashboard_data(db, updated_counter)
+    
+    # Emit socket updates after database commit
+    from app.services import socket_service
+    socket_service.emit_counter_status_changed(counter_id=counter["id"], status=payload.status)
+    socket_service.emit_queue_updated(
+        service_id=counter["service_id"],
+        payload={"action": "COUNTER_STATUS", "status": payload.status}
+    )
     
     return {
         "message": f"Counter status updated to {payload.status}",

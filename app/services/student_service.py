@@ -181,7 +181,7 @@ def cancel_token(db: sqlite3.Connection, user_id: str, token_id: str) -> dict:
     try:
         # Fetch token to verify existence and check details
         cursor.execute("""
-            SELECT student_id, status, counter_id, service_id 
+            SELECT student_id, status, counter_id, service_id, token_number
             FROM tokens 
             WHERE id = ?;
         """, (token_id,))
@@ -215,7 +215,16 @@ def cancel_token(db: sqlite3.Connection, user_id: str, token_id: str) -> dict:
         """, (token_id,))
         db.commit()
         
-        return {"success": True, "message": "Token cancelled successfully"}
+        return {
+            "success": True,
+            "message": "Token cancelled successfully",
+            "token": {
+                "id": token_id,
+                "token_number": token["token_number"],
+                "service_id": token["service_id"],
+                "counter_id": token["counter_id"]
+            }
+        }
         
     except HTTPException:
         db.rollback()

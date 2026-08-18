@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import initialize_schema, seed_database
-from app.routers import student, staff
+from app.routers import student, staff, admin
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -38,6 +38,7 @@ app.add_middleware(
 # Mount API routers
 app.include_router(student.router, prefix="/api/student", tags=["Student"])
 app.include_router(staff.router, prefix="/api/staff", tags=["Staff"])
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 
 # GET /api/health
 @app.get("/api/health")
@@ -90,3 +91,8 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"message": "An internal server error occurred", "error": str(exc)}
     )
+
+import socketio
+from app.services.socket_service import sio
+app = socketio.ASGIApp(sio, other_asgi_app=app, socketio_path='socket.io')
+

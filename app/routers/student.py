@@ -117,6 +117,19 @@ def book_new_token(
         service_id=payload.service_id,
         counter_id=payload.counter_id
     )
+    
+    # Emit socket update after database commit
+    from app.services import socket_service
+    socket_service.emit_queue_updated(
+        service_id=token["service_id"],
+        payload={
+            "action": "CREATE",
+            "tokenId": token["id"],
+            "tokenNumber": token["token_number"],
+            "counterId": token["counter_id"]
+        }
+    )
+    
     return {"token": token}
 
 @router.get("/tokens/active", response_model=ActiveTokenResponse)
@@ -151,5 +164,21 @@ def cancel_active_token(
     """
     Cancels a student's active token. Supporting both PATCH and POST methods.
     """
-    return student_service.cancel_token(db, user_id=current_user["id"], token_id=token_id)
+    res = student_service.cancel_token(db, user_id=current_user["id"], token_id=token_id)
+    
+    # Emit socket update after database commit
+    token = res.get("token")
+    if token and token["service_id"]:
+        from app.services import socket_service
+        socket_service.emit_queue_updated(
+            service_id=token["service_id"],
+            payload={
+                "action": "CANCEL",
+                "tokenId": token["id"],
+                "tokenNumber": token["token_number"],
+                "counterId": token["counter_id"]
+            }
+        )
+        
+    return {"success": True, "message": res["message"]}
 
