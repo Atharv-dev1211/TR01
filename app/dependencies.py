@@ -83,3 +83,26 @@ def require_role(allowed_roles: list[str]):
 require_student = require_role(["STUDENT"])
 require_staff = require_role(["STAFF"])
 require_admin = require_role(["ADMIN"])
+
+def get_assigned_counter(
+    current_user: dict = Depends(require_staff),
+    db: sqlite3.Connection = Depends(get_db)
+) -> dict:
+    """
+    Enforces staff role and retrieves the counter assigned to the staff member.
+    """
+    cursor = db.cursor()
+    cursor.execute("""
+        SELECT c.*, s.name as service_name, s.code as service_code
+        FROM counters c
+        JOIN services s ON c.service_id = s.id
+        WHERE c.assigned_staff_id = ?;
+    """, (current_user["id"],))
+    counter = cursor.fetchone()
+    if not counter:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Staff member is not assigned to any active counter"
+        )
+    return dict(counter)
+

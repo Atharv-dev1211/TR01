@@ -474,4 +474,334 @@ def test_concurrent_booking_unique_token_numbers():
     assert len(booking_numbers) == 10
     assert len(set(booking_numbers)) == 10
 
+# Phase 3 Staff Operations Tests
+
+def test_staff_unauthorized_access():
+    """
+    Verify that student users or unassigned users are blocked from staff endpoints.
+    """
+    # Student token to staff dashboard -> 403
+    res1 = client.get(
+        "/api/staff/dashboard",
+        headers={"Authorization": "Bearer mock-token-student"}
+    )
+    assert res1.status_code == 403
+
+    # Unassigned staff token -> 403 (usr-admin-demo is ADMIN, not staff)
+    res2 = client.get(
+        "/api/staff/dashboard",
+        headers={"Authorization": "Bearer mock-token-admin"}
+    )
+    assert res2.status_code == 403
+
+def test_staff_dashboard_success():
+    """
+    Verify that an assigned staff member can retrieve their dashboard details.
+    """
+    response = client.get(
+        "/api/staff/dashboard",
+        headers={"Authorization": "Bearer mock-token-staff"} # usr-staff-rudresh
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "staff" in data
+    assert data["staff"]["id"] == "usr-staff-rudresh"
+    assert "counter" in data
+    assert data["counter"]["id"] == "cntr-lp-2"
+    assert "service" in data
+    assert "current_token" in data
+    assert "waiting_queue" in data
+    assert "stats" in data
+    assert "queue_length" in data["stats"]
+    assert "completed_today_count" in data["stats"]
+
+def test_staff_counter_queue():
+    """
+    Verify staff waiting queue retrieval.
+    """
+    response = client.get(
+        "/api/staff/counter/queue",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    if len(data) > 0:
+        assert "token_number" in data[0]
+        assert "people_ahead" in data[0]
+
+def test_staff_get_token_by_id():
+    """
+    Verify staff can fetch token by ID.
+    """
+    # Find an active token first
+    response = client.get(
+        "/api/staff/counter/queue",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    data = response.json()
+    assert len(data) > 0
+    token_id = data[0]["id"]
+
+    res_detail = client.get(
+        f"/api/staff/tokens/{token_id}",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert res_detail.status_code == 200
+    assert res_detail.json()["id"] == token_id
+
+def test_staff_next_complete_cycle():
+    """
+    Verify complete staff NEXT -> SERVING -> COMPLETED token lifecycle.
+    """
+    # Clean up pre-seeded serving token on cntr-lp-2
+    import sqlite3
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("UPDATE tokens SET status = 'COMPLETED' WHERE counter_id = 'cntr-lp-2' AND status = 'SERVING';")
+    conn.commit()
+    conn.close()
+
+    # 1. Call next token
+    next_res = client.post(
+        "/api/staff/counter/next",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert next_res.status_code == 200
+    token = next_res.json()["token"]
+    assert token["status"] == "SERVING"
+    assert token["counter_id"] == "cntr-lp-2"
+    token_id = token["id"]
+
+    # 2. Check student active token state
+    import jwt
+    student_jwt = jwt.encode(
+        {"id": token["student_id"], "email": token["student_email"], "name": token["student_name"]},
+        settings.jwt_secret,
+        algorithm="HS256"
+    )
+    student_active = client.get(
+        "/api/student/tokens/active",
+        headers={"Authorization": f"Bearer {student_jwt}"}
+    )
+    assert student_active.status_code == 200
+    assert student_active.json()["token"]["status"] == "SERVING"
+
+    # 3. Complete the token
+    comp_res = client.post(
+        f"/api/staff/tokens/{token_id}/complete",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert comp_res.status_code == 200
+    assert comp_res.json()["token"]["status"] == "COMPLETED"
+
+    # 4. Attempting to complete it again should fail
+    fail_res = client.post(
+        f"/api/staff/tokens/{token_id}/complete",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert fail_res.status_code == 400
+
+def test_staff_hold_and_resume():
+    """
+    Verify SERVING -> HELD -> SERVING lifecycle.
+    """
+    # Clean up pre-seeded serving token on cntr-lp-2
+    import sqlite3
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("UPDATE tokens SET status = 'COMPLETED' WHERE counter_id = 'cntr-lp-2' AND status = 'SERVING';")
+    conn.commit()
+    conn.close()
+
+    # 1. Call next token
+    next_res = client.post(
+        "/api/staff/counter/next",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert next_res.status_code == 200
+    token = next_res.json()["token"]
+    token_id = token["id"]
+
+    # 2. Put on HOLD
+    hold_res = client.post(
+        f"/api/staff/tokens/{token_id}/hold",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert hold_res.status_code == 200
+    assert hold_res.json()["token"]["status"] == "HELD"
+
+    # 3. Resume the token
+    res_res = client.post(
+        f"/api/staff/tokens/{token_id}/resume",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert res_res.status_code == 200
+    assert res_res.json()["token"]["status"] == "SERVING"
+
+    # 4. Complete to clean up
+    client.post(
+        f"/api/staff/tokens/{token_id}/complete",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+
+def test_staff_skip():
+    """
+    Verify skip token mutation.
+    """
+    # Clean up pre-seeded serving token on cntr-lp-2
+    import sqlite3
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("UPDATE tokens SET status = 'COMPLETED' WHERE counter_id = 'cntr-lp-2' AND status = 'SERVING';")
+    conn.commit()
+    conn.close()
+
+    # 1. Call next token
+    next_res = client.post(
+        "/api/staff/counter/next",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert next_res.status_code == 200
+    token = next_res.json()["token"]
+    token_id = token["id"]
+
+    # 2. Skip the token
+    skip_res = client.post(
+        f"/api/staff/tokens/{token_id}/skip",
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert skip_res.status_code == 200
+    assert skip_res.json()["token"]["status"] == "SKIPPED"
+
+def test_counter_status_toggle():
+    """
+    Verify changing counter status via staff route.
+    """
+    # Set to BUSY
+    response1 = client.patch(
+        "/api/staff/counter/status",
+        json={"status": "BUSY"},
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert response1.status_code == 200
+    assert response1.json()["counter"]["status"] == "BUSY"
+
+    # Set back to OPEN
+    response2 = client.patch(
+        "/api/staff/counter/status",
+        json={"status": "OPEN"},
+        headers={"Authorization": "Bearer mock-token-staff"}
+    )
+    assert response2.status_code == 200
+    assert response2.json()["counter"]["status"] == "OPEN"
+
+def test_queue_ordering_priority_first():
+    """
+    Verify priority queue ordering (FCFS within priority, highest priority first).
+    """
+    import jwt
+    import sqlite3
+    
+    t_normal = jwt.encode({"id": "usr-ord-normal", "email": "n@example.com", "name": "Normal"}, settings.jwt_secret, algorithm="HS256")
+    t_urgent = jwt.encode({"id": "usr-ord-urgent", "email": "u@example.com", "name": "Urgent"}, settings.jwt_secret, algorithm="HS256")
+
+    # Clean srv-cnt tokens to ensure stable FCFS checking
+    conn = sqlite3.connect("test_queuecraft.db")
+    conn.execute("DELETE FROM tokens WHERE service_id = 'srv-cnt';")
+    conn.commit()
+    conn.close()
+
+    # 1. Book NORMAL
+    client.post(
+        "/api/student/tokens/book",
+        json={"service_id": "srv-cnt", "counter_id": "cntr-cnt-1"},
+        headers={"Authorization": f"Bearer {t_normal}"}
+    )
+
+    # 2. Update priority of normal token manually or book URGENT (wait! book_token does not specify priority in payload in Phase 2 book_token - wait, book_token inserts as NORMAL by default).
+    # Let's insert a second token for another user with URGENT priority directly in the db, or update it.
+    conn = sqlite3.connect("test_queuecraft.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO tokens (id, token_number, student_id, student_name, student_email, service_id, counter_id, priority, status)
+        VALUES ('tkn-u1', 'CNT-002', 'usr-ord-urgent', 'Urgent Student', 'u@example.com', 'srv-cnt', 'cntr-cnt-1', 'URGENT', 'WAITING');
+    """)
+    conn.commit()
+    conn.close()
+
+    # Fetch waiting queue
+    # The URGENT token should be index 0 (ahead), even though the NORMAL token was booked first!
+    response = client.get(
+        "/api/student/tokens/active",
+        headers={"Authorization": f"Bearer {t_normal}"} # Normal student should have 1 person ahead (the urgent one!)
+    )
+    assert response.status_code == 200
+    assert response.json()["token"]["people_ahead"] == 1
+
+def test_concurrent_staff_next_operations():
+    """
+    Simulate concurrent NEXT actions by two staff members on different counters of the same service.
+    Verify they claim distinct waiting tokens atomically.
+    """
+    import jwt
+    import sqlite3
+    import threading
+    import queue
+
+    # 1. Set up second counter assignment: usr-staff-priya assigned to cntr-lp-1 (which belongs to srv-lp)
+    conn = sqlite3.connect("test_queuecraft.db")
+    cursor = conn.cursor()
+    cursor.execute("UPDATE counters SET status = 'OPEN', assigned_staff_id = 'usr-staff-priya' WHERE id = 'cntr-lp-1';")
+    # Clean up srv-lp active/serving tokens to avoid conflicts
+    cursor.execute("UPDATE tokens SET status = 'COMPLETED' WHERE service_id = 'srv-lp' AND status = 'SERVING';")
+    # Seed 5 waiting tokens for srv-lp
+    for i in range(5):
+        cursor.execute(f"""
+            INSERT INTO tokens (id, token_number, student_id, student_name, service_id, counter_id, priority, status, created_at)
+            VALUES ('tkn-seq-{i}', 'LP-90{i}', 'usr-student-aarav', 'Aarav', 'srv-lp', 'cntr-lp-2', 'NORMAL', 'WAITING', '2026-08-19 00:00:0{i}');
+        """)
+    conn.commit()
+    conn.close()
+
+    # Staff credentials
+    staff_rudresh_token = "mock-token-staff" # usr-staff-rudresh -> cntr-lp-2
+    staff_priya_token = jwt.encode(
+        {"id": "usr-staff-priya", "email": "priya@queuecraft.edu", "name": "Priya Singh", "role": "STAFF"},
+        settings.jwt_secret,
+        algorithm="HS256"
+    ) # usr-staff-priya -> cntr-lp-1
+
+    results = queue.Queue()
+
+    def run_next(auth):
+        try:
+            res = client.post(
+                "/api/staff/counter/next",
+                headers={"Authorization": f"Bearer {auth}"}
+            )
+            results.put(res)
+        except Exception as e:
+            results.put(e)
+
+    # Trigger concurrent requests
+    th1 = threading.Thread(target=run_next, args=(staff_rudresh_token,))
+    th2 = threading.Thread(target=run_next, args=(staff_priya_token,))
+    
+    th1.start()
+    th2.start()
+
+    th1.join()
+    th2.join()
+
+    # Collect claimed token IDs
+    claimed_ids = []
+    while not results.empty():
+        res = results.get()
+        assert not isinstance(res, Exception)
+        assert res.status_code == 200
+        claimed_ids.append(res.json()["token"]["id"])
+
+    # Assert both claims succeeded and claimed distinct tokens
+    assert len(claimed_ids) == 2
+    assert len(set(claimed_ids)) == 2
+
+
 

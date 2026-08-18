@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import initialize_schema, seed_database
-from app.routers import student
+from app.routers import student, staff
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -37,6 +37,7 @@ app.add_middleware(
 
 # Mount API routers
 app.include_router(student.router, prefix="/api/student", tags=["Student"])
+app.include_router(staff.router, prefix="/api/staff", tags=["Staff"])
 
 # GET /api/health
 @app.get("/api/health")

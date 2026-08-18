@@ -133,18 +133,16 @@ def get_active_token(db: sqlite3.Connection, user_id: str) -> dict | None:
             
         token = dict(row)
         
-        # Calculate queue stats if WAITING or HELD
-        people_ahead = 0
-        if token["status"] in ("WAITING", "HELD") and token["counter_id"]:
-            cursor.execute("""
-                SELECT COUNT(*) as count 
-                FROM tokens 
-                WHERE counter_id = ? AND status IN ('WAITING', 'HELD') AND created_at < ?;
-            """, (token["counter_id"], token["created_at"]))
-            people_ahead = cursor.fetchone()["count"]
+        # Calculate queue stats using unified queue engine logic
+        from app.services import queue_service
+        details = queue_service.get_token_position_details(db, token["id"])
+        if details:
+            token["people_ahead"] = details["people_ahead"]
+            token["estimated_wait_time"] = details["estimated_wait_time"]
+        else:
+            token["people_ahead"] = 0
+            token["estimated_wait_time"] = 0
             
-        token["people_ahead"] = people_ahead
-        token["estimated_wait_time"] = calculate_estimated_wait(people_ahead)
         return token
         
     except sqlite3.Error as e:
