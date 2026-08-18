@@ -3,7 +3,6 @@ import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { seedDatabase } from './db/seed.js';
 import { socketService } from './services/socketService.js';
 import authRoutes from './routes/auth.js';
@@ -15,9 +14,6 @@ import studentRoutes from './routes/student.js';
 
 import { initializeSchema } from './db/schema.js';
 import { getDb } from './db/database.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
@@ -75,7 +71,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Serve frontend build in production
-const distPath = path.join(__dirname, '../dist');
+const distPath = path.join(process.cwd(), 'dist');
 app.use(express.static(distPath));
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api')) {
