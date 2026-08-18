@@ -53,7 +53,6 @@ const ProtectedStaffRoute: React.FC<{ children: React.ReactNode }> = ({ children
 };
 
 const ProtectedAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
 
   if (isLoading) {
@@ -67,7 +66,6 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
         color: 'var(--text-secondary)',
       }}>
         Authenticating Administrator...
-        Authenticating Student User...
       </div>
     );
   }
@@ -77,7 +75,6 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
   }
 
   if (user?.role !== 'ADMIN') {
-  if (user?.role !== 'STUDENT') {
     return (
       <div style={{
         minHeight: '100vh',
@@ -92,6 +89,50 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
         <h2>Access Denied</h2>
         <p style={{ color: 'var(--text-secondary)' }}>
           Only System Administrators can access this area.
+        </p>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+};
+
+const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, isLoading, user } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'var(--bg-dark)',
+        color: 'var(--text-secondary)',
+      }}>
+        Authenticating Student User...
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user?.role !== 'STUDENT') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: '1rem',
+        backgroundColor: 'var(--bg-dark)',
+        color: 'var(--text-primary)',
+      }}>
+        <h2>Access Denied</h2>
+        <p style={{ color: 'var(--text-secondary)' }}>
           This section is restricted to student accounts only.
         </p>
       </div>
@@ -125,6 +166,9 @@ export const AppContent: React.FC = () => {
               <AdminDashboardPage />
             </SocketProvider>
           </ProtectedAdminRoute>
+        }
+      />
+      <Route
         path="/student"
         element={
           <ProtectedStudentRoute>
@@ -135,13 +179,17 @@ export const AppContent: React.FC = () => {
       <Route
         path="*"
         element={
-          isAuthenticated
-            ? user?.role === 'ADMIN'
-              ? <Navigate to="/admin" replace />
-            ? user?.role === 'STUDENT'
-              ? <Navigate to="/student" replace />
-              : <Navigate to="/staff" replace />
-            : <Navigate to="/login" replace />
+          isAuthenticated ? (
+            user?.role === 'ADMIN' ? (
+              <Navigate to="/admin" replace />
+            ) : user?.role === 'STUDENT' ? (
+              <Navigate to="/student" replace />
+            ) : (
+              <Navigate to="/staff" replace />
+            )
+          ) : (
+            <Navigate to="/login" replace />
+          )
         }
       />
     </Routes>
