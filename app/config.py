@@ -9,8 +9,6 @@ class Settings(BaseSettings):
     port: int = 5000
     cors_origins: List[str] = ["http://localhost:5173", "http://localhost:3000", "http://localhost:5000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"]
     environment: str = "development"
-    firebase_credentials_path: str | None = None
-    firebase_credentials_json: str | None = None
     mock_auth: bool = False
     jwt_secret: str = "queuecraft_jwt_secret_key_2026"
 

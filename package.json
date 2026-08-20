@@ -10,14 +10,14 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "seed": "tsx server/db/seed.ts"
+    "seed": "tsx server/db/seed.ts",
+    "test:integration": "node scripts/integrationSmoke.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "firebase": "^12.17.1",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.475.0",
     "react": "^19.0.0",

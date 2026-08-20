@@ -1,4 +1,4 @@
-name: Frontend CI
+name: Node Application Build & Test
 
 on:
   push:
@@ -10,8 +10,8 @@ on:
       - main
 
 jobs:
-  frontend:
-    name: Frontend Build & Tests
+  node_build_test:
+    name: Node Application Build & Test
     runs-on: ubuntu-latest
 
     steps:
@@ -27,8 +27,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run frontend tests
+      - name: Run Node tests
+        env:
+          DB_PATH: ${{ runner.temp }}/queuecraft-test.db
         run: npm test
 
-      - name: Build frontend
+      - name: Build Node Application
         run: npm run build

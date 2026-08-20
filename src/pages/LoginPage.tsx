@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getFirebaseErrorMessage } from '../utils/firebaseErrors';
 import { UserRole } from '../types';
-import { Layers, Lock, Mail, ArrowRight, ShieldCheck, User, UserPlus, LogIn, AlertTriangle } from 'lucide-react';
+import { Layers, Lock, Mail, ArrowRight, ShieldCheck, User, UserPlus, LogIn } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const [isSignUp, setIsSignUp] = useState<boolean>(false);
@@ -14,7 +13,7 @@ export const LoginPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
-  const { login, signup, isFirebaseConfigured } = useAuth();
+  const { login, signup } = useAuth();
   const navigate = useNavigate();
 
   const handleRedirect = (role?: UserRole) => {
@@ -41,7 +40,7 @@ export const LoginPage: React.FC = () => {
         handleRedirect(user.role);
       }
     } catch (err: any) {
-      setError(getFirebaseErrorMessage(err));
+      setError(err.message || String(err));
     } finally {
       setLoading(false);
     }
@@ -57,18 +56,7 @@ export const LoginPage: React.FC = () => {
       const user = await login('rudresh@queuecraft.edu', 'password123');
       handleRedirect(user.role);
     } catch (err: any) {
-      // If user doesn't exist yet in Firebase, auto sign-up demo user
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-        try {
-          const newUser = await signup('rudresh@queuecraft.edu', 'password123', 'Rudresh (Staff)', 'STAFF');
-          handleRedirect(newUser.role);
-          return;
-        } catch (signupErr: any) {
-          setError(getFirebaseErrorMessage(signupErr));
-          return;
-        }
-      }
-      setError(getFirebaseErrorMessage(err));
+      setError(err.message || String(err));
     } finally {
       setLoading(false);
     }
@@ -84,18 +72,7 @@ export const LoginPage: React.FC = () => {
       const user = await login('student@queuecraft.edu', 'password123');
       handleRedirect(user.role);
     } catch (err: any) {
-      // If user doesn't exist yet in Firebase, auto sign-up demo user
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-        try {
-          const newUser = await signup('student@queuecraft.edu', 'password123', 'Demo Student', 'STUDENT');
-          handleRedirect(newUser.role);
-          return;
-        } catch (signupErr: any) {
-          setError(getFirebaseErrorMessage(signupErr));
-          return;
-        }
-      }
-      setError(getFirebaseErrorMessage(err));
+      setError(err.message || String(err));
     } finally {
       setLoading(false);
     }
@@ -111,18 +88,7 @@ export const LoginPage: React.FC = () => {
       const user = await login('admin@queuecraft.edu', 'password123');
       handleRedirect(user.role);
     } catch (err: any) {
-      // If user doesn't exist yet in Firebase, auto sign-up demo user
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-        try {
-          const newUser = await signup('admin@queuecraft.edu', 'password123', 'System Administrator', 'ADMIN');
-          handleRedirect(newUser.role);
-          return;
-        } catch (signupErr: any) {
-          setError(getFirebaseErrorMessage(signupErr));
-          return;
-        }
-      }
-      setError(getFirebaseErrorMessage(err));
+      setError(err.message || String(err));
     } finally {
       setLoading(false);
     }
@@ -157,25 +123,6 @@ export const LoginPage: React.FC = () => {
             Campus Queue & Token Management Platform
           </p>
         </div>
-
-        {/* Firebase Config Notice if missing env vars */}
-        {!isFirebaseConfigured && (
-          <div style={{
-            backgroundColor: 'rgba(245, 158, 11, 0.15)',
-            border: '1px solid rgba(245, 158, 11, 0.4)',
-            color: '#fcd34d',
-            padding: '0.75rem 1rem',
-            borderRadius: 'var(--radius-md)',
-            fontSize: '0.8rem',
-            marginBottom: '1.25rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-          }}>
-            <AlertTriangle size={18} style={{ flexShrink: 0 }} />
-            <span>Please configure your Firebase credentials in the <code>.env</code> file.</span>
-          </div>
-        )}
 
         {/* Tab Switcher: Sign In vs Sign Up */}
         <div style={{

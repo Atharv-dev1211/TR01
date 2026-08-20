@@ -2,7 +2,7 @@ import sqlite3
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.database import get_db
-from app.auth.firebase import verify_firebase_token
+from app.auth.jwt import verify_jwt_token
 
 security = HTTPBearer()
 
@@ -11,7 +11,7 @@ def get_current_user(
     db: sqlite3.Connection = Depends(get_db)
 ) -> dict:
     """
-    Extracts Bearer token, verifies via Firebase Admin SDK (with mock fallback),
+    Extracts Bearer token, verifies via local JWT validation (with mock fallback),
     resolves identity from SQLite database, and auto-syncs user profile if missing.
     """
     token = credentials.credentials
@@ -22,7 +22,7 @@ def get_current_user(
         )
 
     # Validate token and extract properties
-    decoded = verify_firebase_token(token)
+    decoded = verify_jwt_token(token)
     uid = decoded.get("uid")
     email = decoded.get("email")
     name = decoded.get("name")
@@ -43,7 +43,7 @@ def get_current_user(
         cursor.execute("SELECT id, name, email, role, created_at FROM users WHERE email = ?", (email,))
         user = cursor.fetchone()
 
-    # 3. Auto-sync: Create the user in SQLite database if they exist in Firebase but not database
+    # 3. Auto-sync: Create the user in SQLite database if they are authenticated via JWT but not registered in database
     if not user:
         # Strictly default role to STUDENT to prevent privilege escalation vulnerabilities
         role = "STUDENT"

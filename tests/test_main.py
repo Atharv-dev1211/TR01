@@ -6,7 +6,7 @@ from app.config import settings
 
 # Force settings for the test environment
 settings.mock_auth = True
-settings.db_path = "test_queuecraft.db"
+settings.db_path = os.getenv("DB_PATH", "test_queuecraft.db")
 
 client = TestClient(app)
 
