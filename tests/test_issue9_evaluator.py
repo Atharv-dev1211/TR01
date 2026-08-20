@@ -13,7 +13,7 @@ from app.config import settings
 settings.mock_auth = True
 settings.db_path = "test_queuecraft_eval9.db"
 
-client = TestClient(app)
+client = TestClient(app, raise_server_exceptions=False)
 
 @pytest.fixture(autouse=True)
 def setup_eval_db():

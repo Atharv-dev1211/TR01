@@ -121,6 +121,23 @@ def test_h8a_effective_workload_allocation():
     c_c_data = next(c for c in srv["counters"] if c["id"] == cntr_c_id)
 
     assert c_c_data["status"] == "CLOSED", "Counter C must be marked CLOSED"
+    assert c_a_data["status"] == "OPEN", "Counter A must be OPEN"
+    assert c_b_data["status"] == "OPEN", "Counter B must be OPEN"
+
+    # Effective workload assertions:
+    # 1. Counter A has an active serving token; effective workload / estimated wait must be > 0
+    assert c_a_data["estimated_wait_time"] > 0, (
+        "Effective workload failure: Counter A is actively serving a token and must report "
+        f"estimated_wait_time > 0 reflecting active workload, got {c_a_data['estimated_wait_time']}."
+    )
+    # 2. Counter B is completely idle (0 serving, 0 waiting); estimated wait must be 0
+    assert c_b_data["estimated_wait_time"] == 0, (
+        f"Counter B is completely idle and must report estimated_wait_time == 0, got {c_b_data['estimated_wait_time']}."
+    )
+    # 3. Active workload must exceed idle workload
+    assert c_a_data["estimated_wait_time"] > c_b_data["estimated_wait_time"], (
+        "Active counter workload must be strictly greater than idle counter workload."
+    )
 
     # 2. Allocation Test:
     # Book a token for Counter B (favorable effective workload)
