@@ -1,0 +1,84 @@
+name: Database CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  database:
+    name: Database Integrity
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Initialize and seed isolated database
+        env:
+          DB_PATH: ${{ runner.temp }}/queuecraft-ci.db
+        run: npm run seed
+
+      - name: Verify SQLite integrity
+        env:
+          DB_PATH: ${{ runner.temp }}/queuecraft-ci.db
+        run: |
+          node --input-type=module <<'EOF'
+          import Database from 'better-sqlite3';
+
+          const db = new Database(process.env.DB_PATH);
+
+          const integrity = db.pragma('integrity_check', { simple: true });
+
+          if (integrity !== 'ok') {
+            console.error(`SQLite integrity check failed: ${integrity}`);
+            process.exit(1);
+          }
+
+          const foreignKeys = db.prepare('PRAGMA foreign_key_check').all();
+
+          if (foreignKeys.length > 0) {
+            console.error('Foreign key violations detected:');
+            console.error(foreignKeys);
+            process.exit(1);
+          }
+
+          const requiredTables = [
+            'users',
+            'services',
+            'counters',
+            'tokens'
+          ];
+
+          for (const table of requiredTables) {
+            const result = db
+              .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?"
+              )
+              .get(table);
+
+            if (!result) {
+              console.error(`Missing required table: ${table}`);
+              process.exit(1);
+            }
+          }
+
+          console.log('SQLite integrity check: PASS');
+          console.log('Foreign key check: PASS');
+          console.log('Required tables: PASS');
+
+          db.close();
+          EOF
