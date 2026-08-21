@@ -100,11 +100,14 @@ def initialize_schema() -> None:
         );
         """)
         
-        # INDEXES FOR MAX PERFORMANCE
+        # INDEXES FOR MAX PERFORMANCE & CONCURRENCY SAFETY
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_service_status ON tokens(service_id, status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_counter_status ON tokens(counter_id, status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tokens_created_priority ON tokens(priority, created_at);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_counters_assigned_staff ON counters(assigned_staff_id);")
+        
+        # UNIQUE CONSTRAINTS FOR CONCURRENCY PROTECTION
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_service_token_number ON tokens(service_id, token_number);")
         
         conn.commit()
     finally:

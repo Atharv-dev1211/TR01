@@ -63,15 +63,28 @@ def book_token(
                 detail="You already have an active token. Complete or cancel it first."
             )
 
-        # 4. Generate unique sequential token number (e.g. LP-042)
+        # 4. Generate unique sequential token number (e.g. LP-046, LIB-051)
         cursor.execute("""
-            SELECT COUNT(*) as count 
-            FROM tokens 
-            WHERE service_id = ? AND date(created_at) = date('now');
-        """, (service_id,))
-        count = cursor.fetchone()["count"]
-        
-        seq_num = str(count + 1).zfill(3)
+            SELECT token_number FROM tokens 
+            WHERE service_id = ? AND token_number LIKE ?;
+        """, (service_id, f"{service['code']}-%"))
+        existing_tokens = cursor.fetchall()
+        max_num = 0
+        for row in existing_tokens:
+            t_num = row["token_number"]
+            try:
+                parts = t_num.split("-")
+                if len(parts) >= 2 and parts[-1].isdigit():
+                    num = int(parts[-1])
+                    if num > max_num:
+                        max_num = num
+            except Exception:
+                pass
+                
+        if max_num == 0 and len(existing_tokens) > 0:
+            max_num = len(existing_tokens)
+
+        seq_num = str(max_num + 1).zfill(3)
         token_number = f"{service['code']}-{seq_num}"
         token_id = str(uuid.uuid4())
 
