@@ -57,10 +57,15 @@ export function initializeSchema(): void {
       FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE SET NULL
     );
 
-    -- INDEXES FOR QUEUE PERFORMANCE
+    -- INDEXES FOR QUEUE PERFORMANCE & CONCURRENCY SAFETY
     CREATE INDEX IF NOT EXISTS idx_tokens_service_status ON tokens(service_id, status);
     CREATE INDEX IF NOT EXISTS idx_tokens_counter_status ON tokens(counter_id, status);
+    CREATE INDEX IF NOT EXISTS idx_tokens_student_status ON tokens(student_id, status);
+    CREATE INDEX IF NOT EXISTS idx_tokens_completed ON tokens(service_id, status, completed_at);
     CREATE INDEX IF NOT EXISTS idx_tokens_created_priority ON tokens(priority, created_at);
     CREATE INDEX IF NOT EXISTS idx_counters_assigned_staff ON counters(assigned_staff_id);
+    
+    -- UNIQUE CONSTRAINTS FOR CONCURRENCY PROTECTION
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_service_token_number ON tokens(service_id, token_number);
   `);
 }

@@ -11,8 +11,14 @@ dist/
 
 # Local database
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
+
+# Local clones & test fixtures
+TR01-CLONE-TEST/
+*-CLONE-TEST/
 
 # TypeScript build info
 *.tsbuildinfo

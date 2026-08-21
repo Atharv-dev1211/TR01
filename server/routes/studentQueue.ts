@@ -65,68 +65,94 @@ router.post('/tokens/book', (req: AuthRequest, res: Response) => {
   try {
     const db = getDb();
 
-    // Check if the student already has an active token
-    const activeToken = db.prepare(`
-      SELECT id FROM tokens 
-      WHERE student_id = ? AND status IN ('WAITING', 'SERVING', 'HELD')
-    `).get(user.id);
+    // Execute the complete booking sequence within a single atomic SQLite transaction
+    const bookTransaction = db.transaction(() => {
+      // 1. Check if the student already has an active token
+      const activeToken = db.prepare(`
+        SELECT id FROM tokens 
+        WHERE student_id = ? AND status IN ('WAITING', 'SERVING', 'HELD')
+      `).get(user.id);
 
-    if (activeToken) {
+      if (activeToken) {
+        return { status: 400, error: 'You already have an active token. Complete or cancel it first.' };
+      }
+
+      // 2. Verify service exists
+      const service = db.prepare('SELECT code FROM services WHERE id = ?').get(service_id) as any;
+      if (!service) {
+        return { status: 404, error: 'Service not found' };
+      }
+
+      // 3. Verify counter exists and is open
+      const counter = db.prepare('SELECT id, status, service_id FROM counters WHERE id = ?').get(counter_id) as any;
+      if (!counter || counter.service_id !== service_id) {
+        return { status: 404, error: 'Counter not found' };
+      }
+      
+      if (counter.status === 'CLOSED' || counter.status === 'MAINTENANCE') {
+        return { status: 400, error: 'Counter is currently not accepting new tokens' };
+      }
+
+      // 4. Generate unique sequential token number from maximum existing sequence
+      const existingTokens = db.prepare(`
+        SELECT token_number FROM tokens 
+        WHERE service_id = ? AND token_number LIKE ?
+      `).all(service_id, `${service.code}-%`) as { token_number: string }[];
+
+      let maxNum = 0;
+      for (const t of existingTokens) {
+        const parts = t.token_number.split('-');
+        if (parts.length >= 2) {
+          const num = parseInt(parts[parts.length - 1], 10);
+          if (!isNaN(num) && num > maxNum) {
+            maxNum = num;
+          }
+        }
+      }
+      if (maxNum === 0 && existingTokens.length > 0) {
+        maxNum = existingTokens.length;
+      }
+
+      const seqNum = (maxNum + 1).toString().padStart(3, '0');
+      const tokenNumber = `${service.code}-${seqNum}`;
+      const tokenId = crypto.randomUUID();
+      const createdAt = new Date().toISOString();
+
+      // 5. Insert new token with high-precision timestamp
+      db.prepare(`
+        INSERT INTO tokens (id, token_number, student_id, student_name, student_email, service_id, counter_id, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'WAITING', ?)
+      `).run(tokenId, tokenNumber, user.id, user.name, user.email, service_id, counter_id, createdAt);
+
+      // 6. Fetch the inserted token details with joined service and counter names
+      const token = db.prepare(`
+        SELECT t.*, s.name as service_name, c.name as counter_name
+        FROM tokens t
+        JOIN services s ON t.service_id = s.id
+        JOIN counters c ON t.counter_id = c.id
+        WHERE t.id = ?
+      `).get(tokenId);
+
+      return { status: 200, token };
+    });
+
+    const result = bookTransaction();
+
+    if (result.error) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+
+    // Notify staff and other students via socket
+    socketService.emitQueueUpdated(service_id, { counterId: counter_id });
+
+    res.json({ token: result.token });
+  } catch (err: any) {
+    console.error('Error booking token:', err);
+    if (err && (err.code === 'SQLITE_CONSTRAINT_UNIQUE' || err.message?.includes('UNIQUE constraint failed'))) {
       res.status(400).json({ error: 'You already have an active token. Complete or cancel it first.' });
       return;
     }
-
-    // Get service code
-    const service = db.prepare('SELECT code FROM services WHERE id = ?').get(service_id) as any;
-    if (!service) {
-      res.status(404).json({ error: 'Service not found' });
-      return;
-    }
-
-    // Get counter
-    const counter = db.prepare('SELECT id, status FROM counters WHERE id = ?').get(counter_id) as any;
-    if (!counter) {
-      res.status(404).json({ error: 'Counter not found' });
-      return;
-    }
-    
-    if (counter.status === 'CLOSED' || counter.status === 'MAINTENANCE') {
-       res.status(400).json({ error: 'Counter is currently not accepting new tokens' });
-       return;
-    }
-
-    // Generate Token Number (e.g., LP-042)
-    const sequenceQuery = db.prepare(`
-      SELECT COUNT(*) as count 
-      FROM tokens 
-      WHERE service_id = ? AND date(created_at) = date('now')
-    `).get(service_id) as any;
-    
-    const seqNum = (sequenceQuery.count + 1).toString().padStart(3, '0');
-    const tokenNumber = `${service.code}-${seqNum}`;
-    const tokenId = crypto.randomUUID();
-
-    // Insert new token
-    db.prepare(`
-      INSERT INTO tokens (id, token_number, student_id, student_name, student_email, service_id, counter_id, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'WAITING')
-    `).run(tokenId, tokenNumber, user.id, user.name, user.email, service_id, counter_id);
-
-    // Notify staff and other students
-    socketService.emitQueueUpdated(service_id, { counterId: counter_id });
-
-    // Fetch the inserted token details
-    const token = db.prepare(`
-      SELECT t.*, s.name as service_name, c.name as counter_name
-      FROM tokens t
-      JOIN services s ON t.service_id = s.id
-      JOIN counters c ON t.counter_id = c.id
-      WHERE t.id = ?
-    `).get(tokenId);
-
-    res.json({ token });
-  } catch (err) {
-    console.error('Error booking token:', err);
     res.status(500).json({ error: 'Failed to book token' });
   }
 });

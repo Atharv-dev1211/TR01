@@ -129,24 +129,26 @@ export class DefaultQueueEngine implements IQueueEngine {
     if (!service) throw new Error('Service not found');
 
     const code = service.code;
-    const maxToken = db.prepare(`
+    const existingTokens = db.prepare(`
       SELECT token_number FROM tokens
       WHERE service_id = ? AND token_number LIKE ?
-      ORDER BY ROWID DESC
-      LIMIT 1
-    `).get(serviceId, `${code}-%`) as { token_number: string } | undefined;
+    `).all(serviceId, `${code}-%`) as { token_number: string }[];
 
-    let nextNum = 1;
-    if (maxToken) {
-      const parts = maxToken.token_number.split('-');
-      if (parts.length === 2) {
-        const num = parseInt(parts[1], 10);
-        if (!isNaN(num)) {
-          nextNum = num + 1;
+    let maxNum = 0;
+    for (const t of existingTokens) {
+      const parts = t.token_number.split('-');
+      if (parts.length >= 2) {
+        const num = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
         }
       }
     }
+    if (maxNum === 0 && existingTokens.length > 0) {
+      maxNum = existingTokens.length;
+    }
 
+    const nextNum = maxNum + 1;
     const suffix = String(nextNum).padStart(3, '0');
     return `${code}-${suffix}`;
   }
